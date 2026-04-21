@@ -1,0 +1,465 @@
+import discord
+from asgiref.sync import sync_to_async
+from discord import app_commands
+from discord.ext import commands
+
+from core.models import DiscordUser, Trade, TradeItem, UserCard
+
+ACTIVE_TRADES = {}
+
+
+class AcceptTradeView(discord.ui.View):
+    def __init__(self, initiator, receiver, cog):
+        super().__init__(timeout=120)
+        self.initiator = initiator
+        self.receiver = receiver
+        self.cog = cog
+
+    @discord.ui.button(label="Accept Trade", style=discord.ButtonStyle.success)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.receiver.id:
+            return await interaction.response.send_message(
+                "Only the invited user can accept this trade.", ephemeral=True
+            )
+
+        await interaction.response.defer()
+        self.stop()
+
+        for child in self.children:
+            child.disabled = True
+        await interaction.edit_original_response(
+            content=f"✅ {self.receiver.mention} accepted the trade request from {self.initiator.mention}!",
+            view=self,
+        )
+
+        await self.cog.init_trade(interaction.channel, self.initiator, self.receiver)
+
+
+class TradeActionView(discord.ui.View):
+    def __init__(self, trade_id, cog):
+        super().__init__(timeout=None)
+        self.trade_id = trade_id
+        self.cog = cog
+        # Overwrite custom IDs for persistence across bot restarts
+        self.confirm_btn.custom_id = f"conf_{trade_id}"
+        self.cancel_btn.custom_id = f"canc_{trade_id}"
+
+    @discord.ui.button(
+        label="Lock In (0/2)", style=discord.ButtonStyle.success, emoji="✅"
+    )
+    async def confirm_btn(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.response.defer(ephemeral=True)
+        t = ACTIVE_TRADES.get(self.trade_id)
+        if not t:
+            return await interaction.followup.send(
+                "Trade not found or expired.", ephemeral=True
+            )
+
+        if interaction.user.id not in (t["initiator"].id, t["receiver"].id):
+            return await interaction.followup.send(
+                "You are not part of this trade.", ephemeral=True
+            )
+
+        if interaction.user.id == t["initiator"].id:
+            t["initiator_confirm"] = True
+        else:
+            t["receiver_confirm"] = True
+
+        confirms = sum([t["initiator_confirm"], t["receiver_confirm"]])
+        button.label = f"Lock In ({confirms}/2)"
+
+        await self.cog.save_trade_state(self.trade_id)
+        await t["message"].edit(
+            embed=self.cog.build_trade_embed(self.trade_id), view=self
+        )
+        await interaction.followup.send(
+            "You have locked in your offer.", ephemeral=True
+        )
+
+        if t["initiator_confirm"] and t["receiver_confirm"]:
+            for child in self.children:
+                child.disabled = True
+            await t["message"].edit(view=self)
+            await self.cog.execute_trade(self.trade_id)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="❌")
+    async def cancel_btn(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.response.defer()
+        t = ACTIVE_TRADES.get(self.trade_id)
+        if not t:
+            return await interaction.followup.send("Trade not found.", ephemeral=True)
+
+        if interaction.user.id not in (t["initiator"].id, t["receiver"].id):
+            return await interaction.followup.send(
+                "You are not part of this trade.", ephemeral=True
+            )
+
+        for child in self.children:
+            child.disabled = True
+        await t["message"].edit(
+            content=f"❌ Trade cancelled by {interaction.user.mention}.", view=self
+        )
+
+        # Update DB
+        db_trade = await Trade.objects.aget(id=t["db_id"])
+        db_trade.status = "CANCELLED"
+        await db_trade.asave()
+        del ACTIVE_TRADES[self.trade_id]
+
+
+class TradeCog(commands.Cog, name="Trading"):
+    def __init__(self, bot):
+        self.bot = bot
+
+    async def cog_load(self):
+        # Re-hydrate trades that were PENDING if the bot was restarted
+        import json
+
+        @sync_to_async
+        def fetch_pending():
+            return list(
+                Trade.objects.filter(status="PENDING", message_id__isnull=False)
+            )
+
+        pending_trades = await fetch_pending()
+        for db_trade in pending_trades:
+            trade_id = f"trade_{db_trade.initiator_id}_{db_trade.receiver_id}"
+            try:
+                initiator = await self.bot.fetch_user(db_trade.initiator_id)
+                receiver = await self.bot.fetch_user(db_trade.receiver_id)
+                channel = await self.bot.fetch_channel(db_trade.channel_id)
+                message = await channel.fetch_message(db_trade.message_id)
+
+                state_data = db_trade.state_data or {}
+                initiator_offer_ids = state_data.get("initiator_offer", [])
+                receiver_offer_ids = state_data.get("receiver_offer", [])
+
+                @sync_to_async
+                def get_cards(card_ids):
+                    return list(
+                        UserCard.objects.filter(card_id__in=card_ids).select_related(
+                            "template"
+                        )
+                    )
+
+                ACTIVE_TRADES[trade_id] = {
+                    "db_id": db_trade.id,
+                    "initiator": initiator,
+                    "receiver": receiver,
+                    "initiator_offer": await get_cards(initiator_offer_ids),
+                    "receiver_offer": await get_cards(receiver_offer_ids),
+                    "initiator_confirm": state_data.get("initiator_confirm", False),
+                    "receiver_confirm": state_data.get("receiver_confirm", False),
+                    "channel": channel,
+                    "message": message,
+                }
+
+                view = TradeActionView(trade_id, self)
+                self.bot.add_view(view, message_id=db_trade.message_id)
+            except Exception as e:
+                # If we fail to rehydrate (e.g., message deleted), just cancel it
+                db_trade.status = "CANCELLED"
+                await db_trade.asave()
+
+    trade_group = app_commands.Group(
+        name="trade", description="Trade cards with other players"
+    )
+
+    @trade_group.command(name="start", description="Start a trade with another player")
+    async def start(self, interaction: discord.Interaction, user: discord.Member):
+        if user.id == interaction.user.id or user.bot:
+            return await interaction.response.send_message(
+                "You cannot trade with yourself or a bot.", ephemeral=True
+            )
+
+        for trade_id, t in ACTIVE_TRADES.items():
+            if interaction.user.id in (t["initiator"].id, t["receiver"].id):
+                return await interaction.response.send_message(
+                    "You are already in an active trade.", ephemeral=True
+                )
+            if user.id in (t["initiator"].id, t["receiver"].id):
+                return await interaction.response.send_message(
+                    f"**{user.display_name}** is already in an active trade.",
+                    ephemeral=True,
+                )
+
+        await interaction.response.send_message(
+            f"🤝 {user.mention}, you have been invited to trade with {interaction.user.mention}!",
+            view=AcceptTradeView(interaction.user, user, self),
+        )
+
+    async def save_trade_state(self, trade_id):
+        t = ACTIVE_TRADES[trade_id]
+        db_trade = await Trade.objects.aget(id=t["db_id"])
+        db_trade.state_data = {
+            "initiator_offer": [c.card_id for c in t["initiator_offer"]],
+            "receiver_offer": [c.card_id for c in t["receiver_offer"]],
+            "initiator_confirm": t["initiator_confirm"],
+            "receiver_confirm": t["receiver_confirm"],
+        }
+        await db_trade.asave()
+
+    async def init_trade(self, channel, initiator, receiver):
+        trade_id = f"trade_{initiator.id}_{receiver.id}"
+
+        t_obj = await Trade.objects.acreate(
+            initiator_id=initiator.id, receiver_id=receiver.id, channel_id=channel.id
+        )
+
+        ACTIVE_TRADES[trade_id] = {
+            "db_id": t_obj.id,
+            "initiator": initiator,
+            "receiver": receiver,
+            "initiator_offer": [],
+            "receiver_offer": [],
+            "initiator_confirm": False,
+            "receiver_confirm": False,
+            "channel": channel,
+            "message": None,
+        }
+
+        embed = self.build_trade_embed(trade_id)
+        view = TradeActionView(trade_id, self)
+        msg = await channel.send(embed=embed, view=view)
+        ACTIVE_TRADES[trade_id]["message"] = msg
+
+        t_obj.message_id = msg.id
+        await t_obj.asave()
+
+    def build_trade_embed(self, trade_id):
+        t = ACTIVE_TRADES[trade_id]
+        embed = discord.Embed(
+            title="🔄 Active Trade",
+            description="Use `/trade add`, and `/trade remove`.",
+        )
+
+        initiator_text = f"**{len(t['initiator_offer'])} Cards Offered**\n"
+        for i, card in enumerate(t["initiator_offer"][:10]):
+            initiator_text += f"- {card.template.name} ({card.template.ovr})\n"
+        if len(t["initiator_offer"]) > 10:
+            initiator_text += f"... and {len(t['initiator_offer']) - 10} more."
+        if not t["initiator_offer"]:
+            initiator_text += "Nothing yet."
+        if t["initiator_confirm"]:
+            initiator_text += "\n\n✅ **READY**"
+
+        receiver_text = f"**{len(t['receiver_offer'])} Cards Offered**\n"
+        for i, card in enumerate(t["receiver_offer"][:10]):
+            receiver_text += f"- {card.template.name} ({card.template.ovr})\n"
+        if len(t["receiver_offer"]) > 10:
+            receiver_text += f"... and {len(t['receiver_offer']) - 10} more."
+        if not t["receiver_offer"]:
+            receiver_text += "Nothing yet."
+        if t["receiver_confirm"]:
+            receiver_text += "\n\n✅ **READY**"
+
+        embed.add_field(
+            name=t["initiator"].display_name, value=initiator_text, inline=True
+        )
+        embed.add_field(name="vs", value="---", inline=True)
+        embed.add_field(
+            name=t["receiver"].display_name, value=receiver_text, inline=True
+        )
+
+        if t["initiator_confirm"] and t["receiver_confirm"]:
+            embed.color = discord.Color.green()
+        else:
+            embed.color = discord.Color.gold()
+        return embed
+
+    async def card_autocomplete(self, interaction: discord.Interaction, current: str):
+        trade_id = None
+        for tid, t in ACTIVE_TRADES.items():
+            if interaction.user.id in (t["initiator"].id, t["receiver"].id):
+                trade_id = tid
+                break
+
+        if not trade_id:
+            return []
+
+        try:
+            user = await DiscordUser.objects.aget(discord_id=interaction.user.id)
+            cards = UserCard.objects.filter(owner=user).select_related("template")
+            if current:
+                cards = cards.filter(template__name__icontains=current)
+
+            choices = []
+            async for c in cards[:25]:
+                choices.append(
+                    app_commands.Choice(
+                        name=f"{c.template.name} ({c.template.ovr}) [{c.card_id}]",
+                        value=c.card_id,
+                    )
+                )
+            return choices
+        except (DiscordUser.DoesNotExist, Exception):
+            return []
+
+    async def trade_offer_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ):
+        trade_id = None
+        t = None
+        for tid, obj in ACTIVE_TRADES.items():
+            if interaction.user.id in (obj["initiator"].id, obj["receiver"].id):
+                trade_id = tid
+                t = obj
+                break
+        if not t:
+            return []
+
+        offer = (
+            t["initiator_offer"]
+            if interaction.user.id == t["initiator"].id
+            else t["receiver_offer"]
+        )
+        choices = []
+        for c in offer:
+            if (
+                current.lower() in c.template.name.lower()
+                or current.lower() in c.card_id.lower()
+            ):
+                choices.append(
+                    app_commands.Choice(
+                        name=f"{c.template.name} ({c.template.ovr}) [{c.card_id}]",
+                        value=c.card_id,
+                    )
+                )
+        return choices[:25]
+
+    @trade_group.command(
+        name="add", description="Add a card to the active trade (No limit)"
+    )
+    @app_commands.autocomplete(card_id=card_autocomplete)
+    async def trade_add(self, interaction: discord.Interaction, card_id: str):
+        await interaction.response.defer(ephemeral=True)
+
+        t, tid = None, None
+        for k, v in ACTIVE_TRADES.items():
+            if interaction.user.id in (v["initiator"].id, v["receiver"].id):
+                t, tid = v, k
+                break
+
+        if not t:
+            return await interaction.followup.send(
+                "You are not in an active trade.", ephemeral=True
+            )
+
+        t["initiator_confirm"] = False
+        t["receiver_confirm"] = False
+
+        try:
+            card = await UserCard.objects.select_related("template").aget(
+                card_id=card_id, owner__discord_id=interaction.user.id
+            )
+        except UserCard.DoesNotExist:
+            return await interaction.followup.send(
+                "You don't own that card or it doesn't exist.", ephemeral=True
+            )
+
+        offer_list = (
+            t["initiator_offer"]
+            if interaction.user.id == t["initiator"].id
+            else t["receiver_offer"]
+        )
+        if any(c.id == card.id for c in offer_list):
+            return await interaction.followup.send(
+                "You already offered that card.", ephemeral=True
+            )
+
+        offer_list.append(card)
+
+        await self.save_trade_state(tid)
+        view = TradeActionView(tid, self)
+        await t["message"].edit(embed=self.build_trade_embed(tid), view=view)
+
+        await interaction.followup.send(
+            f"Added **{card.template.name}** to the trade.", ephemeral=True
+        )
+
+    @trade_group.command(
+        name="remove", description="Remove a card from the active trade"
+    )
+    @app_commands.autocomplete(card_id=trade_offer_autocomplete)
+    async def trade_remove(self, interaction: discord.Interaction, card_id: str):
+        await interaction.response.defer(ephemeral=True)
+
+        t, tid = None, None
+        for k, v in ACTIVE_TRADES.items():
+            if interaction.user.id in (v["initiator"].id, v["receiver"].id):
+                t, tid = v, k
+                break
+
+        if not t:
+            return await interaction.followup.send(
+                "You are not in an active trade.", ephemeral=True
+            )
+
+        t["initiator_confirm"] = False
+        t["receiver_confirm"] = False
+
+        offer_list = (
+            t["initiator_offer"]
+            if interaction.user.id == t["initiator"].id
+            else t["receiver_offer"]
+        )
+        t[
+            f"{'initiator' if interaction.user.id == t['initiator'].id else 'receiver'}_offer"
+        ] = [c for c in offer_list if c.card_id != card_id]
+
+        await self.save_trade_state(tid)
+        view = TradeActionView(tid, self)
+        await t["message"].edit(embed=self.build_trade_embed(tid), view=view)
+        await interaction.followup.send("Card removed from your offer.", ephemeral=True)
+
+    async def execute_trade(self, tid):
+        t = ACTIVE_TRADES[tid]
+
+        initiator_db = await DiscordUser.objects.aget(discord_id=t["initiator"].id)
+        receiver_db = await DiscordUser.objects.aget(discord_id=t["receiver"].id)
+        db_trade = await Trade.objects.aget(id=t["db_id"])
+
+        for card in t["initiator_offer"]:
+            fresh_card = await UserCard.objects.aget(id=card.id)
+            if fresh_card.owner_id != initiator_db.discord_id:
+                continue
+
+            fresh_card.owner = receiver_db
+            await fresh_card.asave()
+            await TradeItem.objects.acreate(
+                trade=db_trade,
+                card=fresh_card,
+                sender=initiator_db,
+                receiver=receiver_db,
+            )
+
+        for card in t["receiver_offer"]:
+            fresh_card = await UserCard.objects.aget(id=card.id)
+            if fresh_card.owner_id != receiver_db.discord_id:
+                continue
+
+            fresh_card.owner = initiator_db
+            await fresh_card.asave()
+            await TradeItem.objects.acreate(
+                trade=db_trade,
+                card=fresh_card,
+                sender=receiver_db,
+                receiver=initiator_db,
+            )
+
+        db_trade.status = "COMPLETED"
+        await db_trade.asave()
+
+        embed = discord.Embed(
+            title="🎉 Trade Completed successfully!", color=discord.Color.green()
+        )
+        await t["channel"].send(embed=embed)
+        del ACTIVE_TRADES[tid]
+
+
+async def setup(bot):
+    await bot.add_cog(TradeCog(bot))

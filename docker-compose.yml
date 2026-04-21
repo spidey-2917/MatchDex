@@ -1,0 +1,62 @@
+version: '3.8'
+
+x-logging:
+  &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-matchdex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?Variable not set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-matchdex_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-matchdex} -d ${POSTGRES_DB:-matchdex_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    command: gunicorn --bind 0.0.0.0:8000 matchdex_web.wsgi:application
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-matchdex}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-matchdex_db}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_DEBUG=False
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - ./media:/app/media
+
+  bot:
+    build: .
+    command: python manage.py run_bot
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-matchdex}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-matchdex_db}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_DEBUG=False
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - ./media:/app/media
+
+volumes:
+  postgres_data:
