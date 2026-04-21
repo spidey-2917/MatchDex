@@ -26,7 +26,7 @@ services:
 
   web:
     build: .
-    command: gunicorn --bind 0.0.0.0:8000 matchdex_web.wsgi:application
+    command: sh -c "python manage.py collectstatic --noinput && gunicorn --bind 0.0.0.0:8000 matchdex_web.wsgi:application"
     ports:
       - "8000:8000"
     environment:
