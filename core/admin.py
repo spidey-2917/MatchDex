@@ -34,7 +34,7 @@ class CardTemplateAdmin(admin.ModelAdmin):
     list_display = ("name", "ovr", "rarity", "position", "card_type", "event_name")
     list_filter = ("rarity", "card_type", "position", "event_name")
     search_fields = ("name", "club", "event_name")
-    readonly_fields = ("ovr", "rarity")
+    readonly_fields = ()
 
 
 @admin.register(UserCard)

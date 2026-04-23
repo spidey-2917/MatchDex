@@ -24,12 +24,10 @@ POS_GROUPS = {
     "ST": "ATT",
     "RW": "ATT",
     "CAM": "MID",
-    "LCM": "MID",
-    "RCM": "MID",
+    "CM": "MID",
     "CDM": "MID",
     "LB": "DEF",
-    "LCB": "DEF",
-    "RCB": "DEF",
+    "CB": "DEF",
     "RB": "DEF",
     "GK": "GK",
 }
@@ -408,7 +406,7 @@ class TeamCog(commands.Cog, name="Teams"):
                 expected_group = SLOT_TO_GROUP.get(prefix, "MID")
 
                 # Find the best available card for this group
-                # GK → position GK, DEF → LB/LCB/RCB/RB, MID → CAM/LCM/RCM/CDM, ATT → LW/ST/RW
+                # GK → position GK, DEF → LB/CB/RB, MID → CAM/CM/CDM, ATT → LW/ST/RW
                 group_positions = [
                     k for k, v in POS_GROUPS.items() if v == expected_group
                 ]
