@@ -37,7 +37,7 @@ class AdminCog(commands.Cog, name="Admin"):
     admin_group = app_commands.Group(
         name="admin",
         description="Owner and admin commands",
-        guild_ids=[],  # Populated from config at cog_load
+        guild_ids=settings.admin_guild_ids,
     )
     spawn_group = app_commands.Group(
         name="spawn", description="Card spawning tools", parent=admin_group
@@ -60,11 +60,6 @@ class AdminCog(commands.Cog, name="Admin"):
     history_group = app_commands.Group(
         name="history", description="View command/card history", parent=admin_group
     )
-
-    async def cog_load(self):
-        # Apply guild IDs from config — this is what hides /admin from other servers
-        if settings.admin_guild_ids:
-            self.admin_group.guild_ids = settings.admin_guild_ids
 
     async def check_admin(self, interaction: discord.Interaction) -> bool:
         if not await self.bot.is_admin(interaction.user):
