@@ -53,12 +53,21 @@ class CardTemplate(models.Model):
         ("GK", "Goalkeeper"),
     ]
 
+    RARITIES = [
+        ("Common", "Common"),
+        ("Uncommon", "Uncommon"),
+        ("Rare", "Rare"),
+        ("Epic", "Epic"),
+        ("Legendary", "Legendary"),
+        ("Premium", "Premium"),
+    ]
+
     name = models.CharField(max_length=100)
     position = models.CharField(max_length=5, choices=POSITIONS)
     attack_stat = models.IntegerField()
     defence_stat = models.IntegerField()
     ovr = models.IntegerField(blank=True, null=True)
-    rarity = models.CharField(max_length=20, blank=True)
+    rarity = models.CharField(max_length=20, choices=RARITIES, blank=True)
     event_name = models.CharField(max_length=100, default="Base")
     club = models.CharField(max_length=100)
     card_type = models.CharField(max_length=10, choices=CARD_TYPES, default="BASE")
@@ -73,45 +82,6 @@ def update_ovr_and_rarity(sender, instance, **kwargs):
     # Only auto-calculate OVR if not provided or zero
     if not instance.ovr:
         instance.ovr = max(instance.attack_stat, instance.defence_stat)
-    
-    ovr = instance.ovr
-    t = instance.card_type
-
-    # Only auto-calculate Rarity if not provided or empty
-    if not instance.rarity:
-        if t == "BASE":
-            if 75 <= ovr <= 86:
-                instance.rarity = "Common"
-            elif 87 <= ovr <= 88:
-                instance.rarity = "Uncommon"
-            elif 89 <= ovr <= 90:
-                instance.rarity = "Rare"
-            else:
-                instance.rarity = "Common"  # Default
-    elif t == "ICON":
-        if 85 <= ovr <= 87:
-            instance.rarity = "Common"
-        elif 88 <= ovr <= 89:
-            instance.rarity = "Uncommon"
-        elif ovr == 90:
-            instance.rarity = "Rare"
-        elif ovr == 91:
-            instance.rarity = "Epic"
-        elif ovr >= 92:
-            instance.rarity = "Legendary"
-    elif t == "EVENT":
-        if 85 <= ovr <= 87:
-            instance.rarity = "Common"
-        elif 88 <= ovr <= 89:
-            instance.rarity = "Uncommon"
-        elif 90 <= ovr <= 91:
-            instance.rarity = "Rare"
-        elif ovr == 92:
-            instance.rarity = "Epic"
-        elif ovr >= 93:
-            instance.rarity = "Legendary"
-    else:  # PREMIUM or others
-        instance.rarity = "Premium"
 
 
 class UserCard(models.Model):

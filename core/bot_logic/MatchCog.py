@@ -494,10 +494,9 @@ class MatchCog(commands.Cog, name="Matches"):
             "p2_choice": None,
             "chooser_id": p1.id,
             "channel": channel,
+            "highlights": [],
+            "main_message": None,
         }
-        await channel.send(
-            f"🏟️ **Match started!** {p1.display_name} vs {p2.display_name}"
-        )
         await self.send_round(mid)
 
     # ── Send round prompt ───────────────────────────────────────
@@ -507,14 +506,24 @@ class MatchCog(commands.Cog, name="Matches"):
         chooser_id = m["chooser_id"]
 
         embed = discord.Embed(
-            title=f"⚽ Round {m['round']}",
+            title="🏟️ MatchDex Match Simulation",
             description=(
                 f"**{m['p1_name']}** {m['p1_score']} - {m['p2_score']} **{m['p2_name']}**\n\n"
+                f"**Round {m['round']}**\n"
                 f"<@{chooser_id}> — choose ⚔️ Attack or 🛡️ Defence!"
             ),
             color=discord.Color.gold(),
         )
-        await ch.send(embed=embed, view=RoleView(mid, self, chooser_id))
+        if m["highlights"]:
+            # Keep last 15 highlights
+            hl_text = "\n".join(m["highlights"][-15:])
+            embed.add_field(name="Match Highlights:", value=hl_text, inline=False)
+
+        view = RoleView(mid, self, chooser_id)
+        if m.get("main_message"):
+            await m["main_message"].edit(embed=embed, view=view)
+        else:
+            m["main_message"] = await ch.send(embed=embed, view=view)
 
     # ── Prompt the responder (after chooser has picked) ─────────
     async def prompt_responder(self, mid):
@@ -533,13 +542,25 @@ class MatchCog(commands.Cog, name="Matches"):
 
         # Forced opposite role
         forced = "DEFENCE" if chooser_role == "ATTACK" else "ATTACK"
-        ch = m["channel"]
 
-        # Public message with a button — responder clicks it to get PRIVATE card list
-        await ch.send(
-            f"<@{responder_id}>, your opponent has chosen! Pick your card for **{forced}**:",
-            view=ResponderView(mid, responder_id, forced, self),
+        embed = discord.Embed(
+            title="🏟️ MatchDex Match Simulation",
+            description=(
+                f"**{m['p1_name']}** {m['p1_score']} - {m['p2_score']} **{m['p2_name']}**\n\n"
+                f"**Round {m['round']}**\n"
+                f"<@{responder_id}>, your opponent has chosen! Pick your card for **{forced}**:"
+            ),
+            color=discord.Color.gold(),
         )
+        if m["highlights"]:
+            hl_text = "\n".join(m["highlights"][-15:])
+            embed.add_field(name="Match Highlights:", value=hl_text, inline=False)
+
+        view = ResponderView(mid, responder_id, forced, self)
+        if m.get("main_message"):
+            await m["main_message"].edit(embed=embed, view=view)
+        else:
+            m["main_message"] = await m["channel"].send(embed=embed, view=view)
 
     # ── Resolve round ───────────────────────────────────────────
     async def resolve_round(self, mid):
@@ -570,23 +591,20 @@ class MatchCog(commands.Cog, name="Matches"):
 
         if v1 > v2:
             m["p1_score"] += 1
-            line = f"🏅 **{m['p1_name']}** wins the round!"
+            line = f"**{m['p1_name']}** wins"
             m["chooser_id"] = m["p1_id"]
         elif v2 > v1:
             m["p2_score"] += 1
-            line = f"🏅 **{m['p2_name']}** wins the round!"
+            line = f"**{m['p2_name']}** wins"
             m["chooser_id"] = m["p2_id"]
         else:
-            line = "🤝 **Draw!** Same player picks next."
+            line = "Draw"
 
-        embed = discord.Embed(
-            title=f"Round {m['round']} Result", color=discord.Color.orange()
-        )
-        embed.add_field(name=m["p1_name"], value=f"**{n1}** ({v1} {r1})", inline=True)
-        embed.add_field(name="vs", value="⚡", inline=True)
-        embed.add_field(name=m["p2_name"], value=f"**{n2}** ({v2} {r2})", inline=True)
-        embed.add_field(name="", value=line, inline=False)
-        await ch.send(embed=embed)
+        emoji1 = "⚔️" if r1 == "ATTACK" else "🛡️"
+        emoji2 = "⚔️" if r2 == "ATTACK" else "🛡️"
+        
+        highlight = f"⏱️ **Round {m['round']}**: {n1} ({v1} {emoji1}) vs {n2} ({v2} {emoji2}) ➔ {line}!"
+        m["highlights"].append(highlight)
 
         m["p1_choice"] = None
         m["p2_choice"] = None
@@ -630,13 +648,16 @@ class MatchCog(commands.Cog, name="Matches"):
             await award(m["p2_id"], 1, False, True)
 
         embed = discord.Embed(title="🏟️ MATCH OVER!", color=discord.Color.red())
-        embed.add_field(
-            name="Score",
-            value=f"**{m['p1_name']}** {s1} - {s2} **{m['p2_name']}**",
-            inline=False,
-        )
-        embed.add_field(name="Result", value=txt, inline=False)
-        await ch.send(embed=embed)
+        embed.description = f"**{m['p1_name']}** {s1} - {s2} **{m['p2_name']}**\n\n{txt}"
+        
+        if m["highlights"]:
+            hl_text = "\n".join(m["highlights"][-15:])
+            embed.add_field(name="Match Highlights:", value=hl_text, inline=False)
+
+        if m.get("main_message"):
+            await m["main_message"].edit(embed=embed, view=None)
+        else:
+            await ch.send(embed=embed)
         del ACTIVE_MATCHES[mid]
 
 
