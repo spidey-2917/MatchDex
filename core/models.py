@@ -269,9 +269,25 @@ class Lineup(models.Model):
 
 
 class PromoCode(models.Model):
+    REWARD_TYPES = [
+        ("POINTS", "Points"),
+        ("PACK_DAILY", "Daily Pack (Base)"),
+        ("PACK_WEEKLY", "Weekly Pack (Icon)"),
+        ("PACK_EVENT", "Event Pack (Event)"),
+        ("PACK_PREMIUM", "Premium Pack (Icon/Event)"),
+        ("CARD", "Specific Card"),
+    ]
+
     code = models.CharField(max_length=50, unique=True)
-    reward_type = models.CharField(max_length=20)  # e.g. PACK, CARD, POINTS
-    reward_value = models.CharField(max_length=100)  # e.g. "EVENT_PACK", "Messi", "500"
+    reward_type = models.CharField(max_length=20, choices=REWARD_TYPES)
+    reward_points = models.IntegerField(default=0, help_text="Amount of points if reward type is POINTS")
+    reward_card = models.ForeignKey(
+        CardTemplate, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        help_text="Select a specific card if reward type is Specific Card"
+    )
     uses = models.IntegerField(default=0)
     max_uses = models.IntegerField(default=100)
     expires_at = models.DateTimeField(null=True, blank=True)

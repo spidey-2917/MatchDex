@@ -137,7 +137,7 @@ class PackCog(commands.Cog, name="Packs"):
     async def promo(self, interaction: discord.Interaction, code: str):
         from core.models import PromoCode
 
-        promo = await PromoCode.objects.filter(code=code).afirst()
+        promo = await PromoCode.objects.select_related("reward_card").filter(code=code).afirst()
         if not promo:
             await interaction.response.send_message(
                 "Invalid promo code!", ephemeral=True
@@ -162,21 +162,67 @@ class PackCog(commands.Cog, name="Packs"):
 
         # Reward logic
         if promo.reward_type == "POINTS":
-            user.points += int(promo.reward_value)
+            user.points += promo.reward_points
             await user.asave()
             await interaction.response.send_message(
-                f"Promo code redeemed! You received **{promo.reward_value} points**.",
+                f"Promo code redeemed! You received **{promo.reward_points} points**.",
                 ephemeral=True,
             )
-        elif promo.reward_type == "PACK":
-            # Just give a random card for now for "PACK" reward
+        elif promo.reward_type == "CARD":
+            await interaction.response.defer()
+            card_template = promo.reward_card
+            if not card_template:
+                await interaction.followup.send("This promo code has no card assigned!", ephemeral=True)
+                return
+            await UserCard.objects.acreate(owner=user, template=card_template)
+            
+            import asyncio
+            image_buffer = await asyncio.to_thread(generate_card_image, card_template)
+            file = discord.File(fp=image_buffer, filename=f"promo_{card_template.name}.png")
+            embed = discord.Embed(
+                title="Promo Code Redeemed!",
+                description=f"You received a specific card: **{card_template.name}**!",
+                color=discord.Color.green(),
+            )
+            embed.set_image(url=f"attachment://promo_{card_template.name}.png")
+            embed.set_footer(text=f"OVR: {card_template.ovr} | Rarity: {card_template.rarity}")
+            await interaction.followup.send(file=file, embed=embed)
+
+        elif promo.reward_type.startswith("PACK_"):
+            await interaction.response.defer()
+            pack_category = promo.reward_type.split("_")[1].lower()
+            
             rarity = get_random_rarity()
-            card = await sync_to_async(get_random_card_by_rarity)(rarity)
+            @sync_to_async
+            def get_pack_card():
+                qs = CardTemplate.objects.filter(rarity=rarity)
+                if pack_category == "daily":
+                    qs = qs.filter(card_type="BASE")
+                elif pack_category == "weekly":
+                    qs = qs.filter(card_type="ICON")
+                elif pack_category == "event":
+                    qs = qs.filter(card_type="EVENT")
+                elif pack_category == "premium":
+                    qs = qs.filter(card_type__in=["ICON", "EVENT"])
+                
+                if not qs.exists():
+                    return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
+                return qs.order_by("?").first()
+            
+            card = await get_pack_card()
             await UserCard.objects.acreate(owner=user, template=card)
-            await interaction.response.send_message(
-                f"Promo code redeemed! You received a **{card.name}** ({card.rarity})!",
-                ephemeral=True,
+            
+            import asyncio
+            image_buffer = await asyncio.to_thread(generate_card_image, card)
+            file = discord.File(fp=image_buffer, filename=f"promo_{card.name}.png")
+            embed = discord.Embed(
+                title=f"Promo Code Redeemed: {pack_category.capitalize()} Pack!",
+                description=f"You got **{card.name}**!",
+                color=discord.Color.green(),
             )
+            embed.set_image(url=f"attachment://promo_{card.name}.png")
+            embed.set_footer(text=f"OVR: {card.ovr} | Rarity: {card.rarity}")
+            await interaction.followup.send(file=file, embed=embed)
 
         promo.uses += 1
         await promo.asave()

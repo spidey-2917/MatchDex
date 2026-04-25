@@ -68,6 +68,7 @@ class LineupAdmin(admin.ModelAdmin):
 @admin.register(PromoCode)
 class PromoCodeAdmin(admin.ModelAdmin):
     list_display = ("code", "reward_type", "uses", "max_uses", "expires_at")
+    autocomplete_fields = ["reward_card"]
 
 
 @admin.register(ServerSettings)
