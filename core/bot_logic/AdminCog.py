@@ -60,6 +60,9 @@ class AdminCog(commands.Cog, name="Admin"):
     history_group = app_commands.Group(
         name="history", description="View command/card history", parent=admin_group
     )
+    server_group = app_commands.Group(
+        name="server", description="Manage admin servers", parent=admin_group
+    )
 
     async def check_admin(self, interaction: discord.Interaction) -> bool:
         if not await self.bot.is_admin(interaction.user):
@@ -753,6 +756,98 @@ class AdminCog(commands.Cog, name="Admin"):
         )
         await interaction.followup.send(embed=embed)
 
+
+    # ══════════════════════════════════════════════════════════
+    #  /admin server
+    # ══════════════════════════════════════════════════════════
+
+    @server_group.command(name="add", description="Add a server to the admin command list")
+    async def server_add(self, interaction: discord.Interaction, guild_id: str):
+        if not await self.check_admin(interaction):
+            return
+
+        try:
+            gid = int(guild_id)
+        except ValueError:
+            return await interaction.response.send_message("Invalid Server ID.", ephemeral=True)
+
+        if gid in settings.admin_guild_ids:
+            return await interaction.response.send_message(f"Server `{gid}` is already in the admin list.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        # 1. Update config.yml safely preserving comments
+        from pathlib import Path
+        path = Path("config.yml")
+        if path.exists():
+            content = path.read_text(encoding="utf-8")
+            lines = content.split('\n')
+            for i, line in enumerate(lines):
+                if line.strip().startswith("guild-ids:"):
+                    # Insert the new guild ID immediately after
+                    lines.insert(i + 1, f"    - {gid}")
+                    break
+            path.write_text('\n'.join(lines), encoding="utf-8")
+
+        # 2. Update memory
+        settings.admin_guild_ids.append(gid)
+        self.admin_group.guild_ids.append(gid)
+
+        # 3. Add to tree for this specific guild and sync
+        target_guild = discord.Object(id=gid)
+        self.bot.tree.add_command(self.admin_group, guild=target_guild)
+        
+        try:
+            await self.bot.tree.sync(guild=target_guild)
+            await interaction.followup.send(f"✅ Successfully added `{gid}` to admin list and synced commands!", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"⚠️ Added `{gid}` to config, but failed to sync commands right now: {e}\n\n*Admin commands will be available in that server after the next bot restart.*", ephemeral=True)
+
+
+    @server_group.command(name="remove", description="Remove a server from the admin command list")
+    async def server_remove(self, interaction: discord.Interaction, guild_id: str):
+        if not await self.check_admin(interaction):
+            return
+
+        try:
+            gid = int(guild_id)
+        except ValueError:
+            return await interaction.response.send_message("Invalid Server ID.", ephemeral=True)
+
+        if gid not in settings.admin_guild_ids:
+            return await interaction.response.send_message(f"Server `{gid}` is not in the admin list.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        # 1. Update config.yml safely preserving comments
+        from pathlib import Path
+        path = Path("config.yml")
+        if path.exists():
+            content = path.read_text(encoding="utf-8")
+            lines = content.split('\n')
+            new_lines = []
+            skip = False
+            for line in lines:
+                # Basic check to remove the specific ID under guild-ids
+                if line.strip() == f"- {gid}":
+                    continue
+                new_lines.append(line)
+            path.write_text('\n'.join(new_lines), encoding="utf-8")
+
+        # 2. Update memory
+        settings.admin_guild_ids.remove(gid)
+        if gid in self.admin_group.guild_ids:
+            self.admin_group.guild_ids.remove(gid)
+
+        # 3. Remove from tree for this specific guild and sync
+        target_guild = discord.Object(id=gid)
+        self.bot.tree.remove_command(self.admin_group.name, guild=target_guild)
+        
+        try:
+            await self.bot.tree.sync(guild=target_guild)
+            await interaction.followup.send(f"✅ Successfully removed `{gid}` from admin list and unsynced commands!", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"⚠️ Removed `{gid}` from config, but failed to unsync commands right now: {e}\n\n*Admin commands will disappear in that server after the next bot restart.*", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))

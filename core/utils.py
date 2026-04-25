@@ -69,10 +69,11 @@ def get_random_rarity():
 
 
 def get_random_card_by_rarity(rarity):
-    cards = CardTemplate.objects.filter(rarity=rarity)
+    chosen_type = random.choices(["BASE", "ICON"], weights=[95, 5], k=1)[0]
+    cards = CardTemplate.objects.filter(card_type=chosen_type, rarity=rarity)
     if not cards.exists():
-        # Fallback to any card if the requested rarity has no entries
-        return CardTemplate.objects.order_by("?").first()
+        # Fallback to any card of that type if the requested rarity has no entries
+        return CardTemplate.objects.filter(card_type=chosen_type).order_by("?").first()
     return cards.order_by("?").first()
 
 

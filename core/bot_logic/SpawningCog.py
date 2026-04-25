@@ -193,9 +193,10 @@ class SpawningCog(commands.Cog, name="Spawning"):
 
     @staticmethod
     def _pick_card(rarity: str):
-        cards = CardTemplate.objects.filter(card_type="BASE", rarity=rarity)
+        chosen_type = random.choices(["BASE", "ICON"], weights=[95, 5], k=1)[0]
+        cards = CardTemplate.objects.filter(card_type=chosen_type, rarity=rarity)
         if not cards.exists():
-            return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
+            return CardTemplate.objects.filter(card_type=chosen_type).order_by("?").first()
         return cards.order_by("?").first()
 
 
