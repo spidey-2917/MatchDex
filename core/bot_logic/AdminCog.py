@@ -897,5 +897,60 @@ class AdminCog(commands.Cog, name="Admin"):
         except Exception as e:
             await interaction.followup.send(f"⚠️ Removed `{gid}` from config, but failed to unsync commands right now: {e}\n\n*Admin commands will disappear in that server after the next bot restart.*", ephemeral=True)
 
+    @server_group.command(name="list", description="List the top servers the bot is in")
+    async def server_list(self, interaction: discord.Interaction):
+        if not await self.check_admin(interaction):
+            return
+        
+        # Sort guilds by member count
+        guilds = sorted(self.bot.guilds, key=lambda g: g.member_count or 0, reverse=True)
+        total = len(guilds)
+        
+        embed = discord.Embed(title=f"🌍 Bot Servers ({total} total)", color=discord.Color.blue())
+        
+        text = ""
+        for i, g in enumerate(guilds[:20]):
+            text += f"{i+1}. **{g.name}** (`{g.id}`) - {g.member_count} members\n"
+        
+        if not text:
+            text = "No servers found."
+            
+        embed.description = text
+        embed.set_footer(text=f"Showing top 20 by member count. Total: {total}")
+            
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @server_group.command(name="leave", description="Make the bot leave a specific server")
+    async def server_leave(self, interaction: discord.Interaction, guild_id: str):
+        if not await self.check_admin(interaction):
+            return
+        
+        try:
+            gid = int(guild_id)
+            guild = self.bot.get_guild(gid)
+            
+            if not guild:
+                return await interaction.response.send_message(
+                    f"❌ Server with ID `{guild_id}` not found in bot's cache.", 
+                    ephemeral=True
+                )
+            
+            name = guild.name
+            await guild.leave()
+            await interaction.response.send_message(
+                f"✅ Successfully left **{name}** (`{guild_id}`).", 
+                ephemeral=True
+            )
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Please provide a valid numerical Guild ID.", 
+                ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Failed to leave server: {e}", 
+                ephemeral=True
+            )
+
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))
