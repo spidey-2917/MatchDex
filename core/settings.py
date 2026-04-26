@@ -40,6 +40,7 @@ class Settings:
     # ── Spawn ────────────────────────────────────────────────
     spawn_chance_range: tuple[int, int] = (20, 50)
     spawn_cooldown_seconds: int = 900
+    spawn_max_interval: int = 1800
     spawn_messages: list[str] = field(
         default_factory=lambda: ["A wild player card appeared!"]
     )
@@ -129,6 +130,9 @@ def read_settings(path: Optional[Path] = None):
     settings.spawn_chance_range = tuple(chance)
     settings.spawn_cooldown_seconds = spawn.get(
         "cooldown-seconds", settings.spawn_cooldown_seconds
+    )
+    settings.spawn_max_interval = spawn.get(
+        "max-interval-seconds", settings.spawn_max_interval
     )
     settings.spawn_messages = spawn.get("spawn-messages", settings.spawn_messages)
     settings.catch_button_label = spawn.get(

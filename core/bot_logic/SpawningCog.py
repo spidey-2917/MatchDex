@@ -133,15 +133,22 @@ class SpawningCog(commands.Cog, name="Spawning"):
         count = self.message_counts[guild_id]
         threshold = self._get_threshold(guild_id)
 
-        if count < threshold:
-            return
-
-        # Cooldown — don't spawn more often than the configured minimum gap
         import time as _time
-
         now = _time.time()
         last = self.last_spawn_time.get(guild_id, 0)
-        if now - last < settings.spawn_cooldown_seconds:
+        elapsed = now - last
+
+        # 1. Check if we should trigger a spawn due to time limit (for inactive servers)
+        time_override = elapsed >= settings.spawn_max_interval
+
+        # 2. Check if we should trigger due to message count
+        count_reached = count >= threshold
+
+        if not (time_override or count_reached):
+            return
+
+        # 3. Check cooldown (only if it wasn't a time-based override)
+        if not time_override and elapsed < settings.spawn_cooldown_seconds:
             return
 
         # Find the spawn channel for this guild
