@@ -19,7 +19,7 @@ class GuildConfigCog(commands.Cog, name="Server Config"):
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def spawn_channel(
-        self, interaction: discord.Interaction, channel: discord.TextChannel
+        self, interaction: discord.Interaction, channel: discord.abc.GuildChannel
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -38,7 +38,7 @@ class GuildConfigCog(commands.Cog, name="Server Config"):
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def log_channel(
-        self, interaction: discord.Interaction, channel: discord.TextChannel
+        self, interaction: discord.Interaction, channel: discord.abc.GuildChannel
     ):
         await interaction.response.defer(ephemeral=True)
 
