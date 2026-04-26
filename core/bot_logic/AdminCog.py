@@ -791,7 +791,6 @@ class AdminCog(commands.Cog, name="Admin"):
 
         # 2. Update memory
         settings.admin_guild_ids.append(gid)
-        self.admin_group.guild_ids.append(gid)
 
         # 3. Add to tree for this specific guild and sync
         target_guild = discord.Object(id=gid)
@@ -836,8 +835,6 @@ class AdminCog(commands.Cog, name="Admin"):
 
         # 2. Update memory
         settings.admin_guild_ids.remove(gid)
-        if gid in self.admin_group.guild_ids:
-            self.admin_group.guild_ids.remove(gid)
 
         # 3. Remove from tree for this specific guild and sync
         target_guild = discord.Object(id=gid)
