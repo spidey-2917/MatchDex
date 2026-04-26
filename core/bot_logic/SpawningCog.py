@@ -82,9 +82,7 @@ class CatchView(discord.ui.View):
                     if embed:
                         embed.description = "🏃💨 **Too slow!** The card got away..."
                         embed.color = discord.Color.red()
-                        await self.message.edit(embed=embed, view=self)
-                else:
-                    await self.message.edit(view=self)
+                        await self.message.edit(embed=embed, view=None)
             except discord.NotFound:
                 pass
 
@@ -131,12 +129,17 @@ class SpawningCog(commands.Cog, name="Spawning"):
         guild_id = message.guild.id
         self.message_counts[guild_id] = self.message_counts.get(guild_id, 0) + 1
         count = self.message_counts[guild_id]
-        threshold = self._get_threshold(guild_id)
-
         import time as _time
         now = _time.time()
-        last = self.last_spawn_time.get(guild_id, 0)
+
+        # Initialize last_spawn_time on first message to prevent immediate spawn on restart
+        if guild_id not in self.last_spawn_time:
+            self.last_spawn_time[guild_id] = now
+            return
+
+        last = self.last_spawn_time.get(guild_id)
         elapsed = now - last
+        threshold = self._get_threshold(guild_id)
 
         # 1. Check if we should trigger a spawn due to time limit (for inactive servers)
         time_override = elapsed >= settings.spawn_max_interval
