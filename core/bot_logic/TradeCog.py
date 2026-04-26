@@ -417,8 +417,10 @@ class TradeCog(commands.Cog, name="Trading"):
         await interaction.followup.send("Card removed from your offer.", ephemeral=True)
 
     async def execute_trade(self, tid):
-        t = ACTIVE_TRADES[tid]
-
+        t = ACTIVE_TRADES.pop(tid, None)
+        if not t:
+            return
+            
         initiator_db = await DiscordUser.objects.aget(discord_id=t["initiator"].id)
         receiver_db = await DiscordUser.objects.aget(discord_id=t["receiver"].id)
         db_trade = await Trade.objects.aget(id=t["db_id"])
@@ -430,6 +432,10 @@ class TradeCog(commands.Cog, name="Trading"):
 
             fresh_card.owner = receiver_db
             await fresh_card.asave()
+
+            from core.utils import clear_card_from_lineups
+            await clear_card_from_lineups(fresh_card.id)
+
             await TradeItem.objects.acreate(
                 trade=db_trade,
                 card=fresh_card,
@@ -444,6 +450,10 @@ class TradeCog(commands.Cog, name="Trading"):
 
             fresh_card.owner = initiator_db
             await fresh_card.asave()
+
+            from core.utils import clear_card_from_lineups
+            await clear_card_from_lineups(fresh_card.id)
+
             await TradeItem.objects.acreate(
                 trade=db_trade,
                 card=fresh_card,
@@ -458,7 +468,6 @@ class TradeCog(commands.Cog, name="Trading"):
             title="🎉 Trade Completed successfully!", color=discord.Color.green()
         )
         await t["channel"].send(embed=embed)
-        del ACTIVE_TRADES[tid]
 
 
 async def setup(bot):

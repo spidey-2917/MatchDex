@@ -145,3 +145,46 @@ async def catch_card(user_id, card_template):
     user.cards_collected += 1
     await user.asave()
     return user_card
+
+
+async def clear_card_from_lineups(user_card_id: int):
+    """
+    Find all Lineup records that reference this specific UserCard ID
+    and set those slots to NULL.
+    """
+    from django.db.models import Q
+
+    from .models import Lineup
+
+    # Search across all 14 slots + 3 subs
+    query = Q(gk_id=user_card_id) | Q(df1_id=user_card_id) | Q(df2_id=user_card_id) | \
+            Q(df3_id=user_card_id) | Q(df4_id=user_card_id) | Q(df5_id=user_card_id) | \
+            Q(md1_id=user_card_id) | Q(md2_id=user_card_id) | Q(md3_id=user_card_id) | \
+            Q(md4_id=user_card_id) | Q(md5_id=user_card_id) | Q(at1_id=user_card_id) | \
+            Q(at2_id=user_card_id) | Q(at3_id=user_card_id) | Q(sub1_id=user_card_id) | \
+            Q(sub2_id=user_card_id) | Q(sub3_id=user_card_id)
+
+    @sync_to_async
+    def clear():
+        lineups = Lineup.objects.filter(query)
+        for lineup in lineups:
+            if lineup.gk_id == user_card_id: lineup.gk = None
+            if lineup.df1_id == user_card_id: lineup.df1 = None
+            if lineup.df2_id == user_card_id: lineup.df2 = None
+            if lineup.df3_id == user_card_id: lineup.df3 = None
+            if lineup.df4_id == user_card_id: lineup.df4 = None
+            if lineup.df5_id == user_card_id: lineup.df5 = None
+            if lineup.md1_id == user_card_id: lineup.md1 = None
+            if lineup.md2_id == user_card_id: lineup.md2 = None
+            if lineup.md3_id == user_card_id: lineup.md3 = None
+            if lineup.md4_id == user_card_id: lineup.md4 = None
+            if lineup.md5_id == user_card_id: lineup.md5 = None
+            if lineup.at1_id == user_card_id: lineup.at1 = None
+            if lineup.at2_id == user_card_id: lineup.at2 = None
+            if lineup.at3_id == user_card_id: lineup.at3 = None
+            if lineup.sub1_id == user_card_id: lineup.sub1 = None
+            if lineup.sub2_id == user_card_id: lineup.sub2 = None
+            if lineup.sub3_id == user_card_id: lineup.sub3 = None
+            lineup.save()
+
+    await clear()

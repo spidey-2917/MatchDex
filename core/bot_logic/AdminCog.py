@@ -190,6 +190,10 @@ class AdminCog(commands.Cog, name="Admin"):
         await UserCard.objects.acreate(owner=db_user, template=card)
         db_user.cards_collected += 1
         await db_user.asave()
+
+        # Clean up in case this card instance was somehow moved manually 
+        # (Though UserCard.acreate creates a NEW instance, so we are safe here)
+        
         await interaction.response.send_message(
             f"Gave **{card.name}** ({card.rarity}) to {user.mention}!", ephemeral=True
         )
@@ -452,6 +456,53 @@ class AdminCog(commands.Cog, name="Admin"):
             f"{len(self.bot.blacklisted_guilds)} guilds.",
             ephemeral=True,
         )
+
+    @md_group.command(
+        name="reload_config", description="Reload settings from config.yml without restart"
+    )
+    async def md_reload_config(self, interaction: discord.Interaction):
+        if not await self.check_admin(interaction):
+            return
+        
+        from core.settings import read_settings
+        read_settings()
+        
+        await interaction.response.send_message(
+            "✅ Configuration reloaded from `config.yml` successfully!", ephemeral=True
+        )
+
+    @md_group.command(
+        name="force_sync", description="Hard-reset command cache and spawn timers for this server"
+    )
+    async def md_force_sync(self, interaction: discord.Interaction):
+        if not await self.check_admin(interaction):
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        # 1. Reset Spawn Timers for this guild
+        spawner = self.bot.get_cog("Spawning")
+        if spawner:
+            gid = interaction.guild_id
+            spawner.message_counts[gid] = 0
+            if gid in spawner.last_spawn_time:
+                del spawner.last_spawn_time[gid]
+            if gid in spawner.spawn_thresholds:
+                del spawner.spawn_thresholds[gid]
+
+        # 2. Hard Sync Command Tree
+        try:
+            # Clear guild-specific tree
+            self.bot.tree.clear_commands(guild=interaction.guild)
+            # Re-add admin group if this is an admin guild
+            if interaction.guild_id in settings.admin_guild_ids:
+                self.bot.tree.add_command(self.admin_group, guild=interaction.guild)
+            
+            # Sync
+            await self.bot.tree.sync(guild=interaction.guild)
+            await interaction.followup.send("✅ Command cache and spawn timers have been hard-reset for this server!", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Force sync failed: {e}", ephemeral=True)
 
     @md_group.command(
         name="sync", description="Sync global commands manually (Warning: Ratelimited by Discord)"
