@@ -414,7 +414,7 @@ class CardListView(discord.ui.View):
             select.row = 2
             self.add_item(select)
 
-        content = f"**{self.user_db.username}'s Cards** (Sorted by {self.sort_by.upper()}{' REVERSED' if self.reverse else ''})\n" \
+        content = f"**{self.user_db.username}'s Cards**\n" \
                   f"Page {self.page + 1} of {max(1, total_pages)} ({self.total_cards} cards total)"
 
         if interaction.response.is_done():
