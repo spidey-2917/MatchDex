@@ -147,6 +147,23 @@ async def catch_card(user_id, card_template):
     return user_card
 
 
+def to_base36(n: int) -> str:
+    """Convert an integer to a base36 string."""
+    chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    if n == 0:
+        return "0"
+    res = ""
+    while n > 0:
+        n, rem = divmod(n, 36)
+        res = chars[rem] + res
+    return res
+
+
+def from_base36(s: str) -> int:
+    """Convert a base36 string to an integer."""
+    return int(s, 36)
+
+
 async def clear_card_from_lineups(user_card_id: int):
     """
     Find all Lineup records that reference this specific UserCard ID

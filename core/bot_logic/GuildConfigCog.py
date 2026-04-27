@@ -30,8 +30,16 @@ class GuildConfigCog(commands.Cog, name="Server Config"):
         await settings.asave()
 
         await interaction.followup.send(
-            f"✅ Spawn channel successfully set to {channel.mention}."
+            f"✅ Spawn channel successfully set to {channel.mention}. I've spawned a card there to start the cycle!"
         )
+
+        # Trigger an immediate spawn
+        spawning_cog = self.bot.get_cog("Spawning")
+        if spawning_cog:
+            try:
+                await spawning_cog._spawn_card(channel)
+            except Exception:
+                pass
 
     @config_group.command(
         name="log_channel", description="Set the admin logging channel for this server"

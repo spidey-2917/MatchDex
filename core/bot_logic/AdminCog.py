@@ -906,11 +906,22 @@ class AdminCog(commands.Cog, name="Admin"):
         guilds = sorted(self.bot.guilds, key=lambda g: g.member_count or 0, reverse=True)
         total = len(guilds)
         
+        # Get spawn status for the top guilds
+        from core.models import ServerSettings
+        guild_ids = [g.id for g in guilds[:20]]
+        
+        @sync_to_async
+        def get_settings_map():
+            return {s.guild_id: s.spawn_channel_id for s in ServerSettings.objects.filter(guild_id__in=guild_ids)}
+        
+        spawn_map = await get_settings_map()
+
         embed = discord.Embed(title=f"🌍 Bot Servers ({total} total)", color=discord.Color.blue())
         
         text = ""
         for i, g in enumerate(guilds[:20]):
-            text += f"{i+1}. **{g.name}** (`{g.id}`) - {g.member_count} members\n"
+            has_spawn = "✅" if spawn_map.get(g.id) else "❌"
+            text += f"{i+1}. {has_spawn} **{g.name}** (`{g.id}`) - {g.member_count} members\n"
         
         if not text:
             text = "No servers found."

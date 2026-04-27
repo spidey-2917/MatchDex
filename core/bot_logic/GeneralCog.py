@@ -54,7 +54,7 @@ class CollectionPagination(discord.ui.View):
         for card in page_cards:
             heart = " ❤️" if card.id in self.favourited_ids else ""
             embed.add_field(
-                name=f"{card.template.name} ({card.template.position}){heart}",
+                name=f"{card.template.display_name} ({card.template.position}){heart}",
                 value=(
                     f"OVR: {card.template.ovr} | Rarity: {card.template.rarity} "
                     f"| ID: {card.card_id}"
@@ -94,11 +94,16 @@ class GeneralCog(commands.Cog, name="General"):
             app_commands.Choice(name="OVR (Highest)", value="ovr"),
             app_commands.Choice(name="Rarity", value="rarity"),
             app_commands.Choice(name="Catch Date (Newest)", value="newest"),
-            app_commands.Choice(name="Card Type (Specials)", value="type"),
+            app_commands.Choice(name="Card Type (Events)", value="type"),
             app_commands.Choice(name="Favourites Only", value="favourites"),
         ]
     )
-    async def collection(self, interaction: discord.Interaction, sort_by: str = "ovr"):
+    async def collection(
+        self,
+        interaction: discord.Interaction,
+        sort_by: str = "ovr",
+        player: str = None,
+    ):
         user, _ = await DiscordUser.objects.aget_or_create(
             discord_id=interaction.user.id,
             defaults={"username": interaction.user.name},
@@ -107,6 +112,9 @@ class GeneralCog(commands.Cog, name="General"):
         @sync_to_async
         def get_user_cards():
             qs = UserCard.objects.filter(owner=user).select_related("template")
+
+            if player:
+                qs = qs.filter(template__name__icontains=player)
 
             if sort_by == "ovr":
                 qs = qs.order_by("-template__ovr", "-caught_at")
@@ -148,42 +156,58 @@ class GeneralCog(commands.Cog, name="General"):
     @app_commands.command(
         name="show", description="Show detailed information about a player card"
     )
-    @app_commands.autocomplete(player_name=player_autocomplete)
-    async def show(self, interaction: discord.Interaction, player_name: str):
+    @app_commands.autocomplete(identifier=player_autocomplete)
+    async def show(self, interaction: discord.Interaction, identifier: str):
         await interaction.response.defer()
 
         @sync_to_async
         def find_card():
-            return (
-                CardTemplate.objects.filter(name__iexact=player_name).first()
-                or CardTemplate.objects.filter(name__icontains=player_name).first()
+            # 1. Try finding by unique UserCard ID
+            uc = (
+                UserCard.objects.filter(card_id__iexact=identifier)
+                .select_related("template", "owner")
+                .first()
             )
+            if uc:
+                return uc, uc.template
 
-        card = await find_card()
-        if not card:
+            # 2. Try finding by Template name
+            tpl = (
+                CardTemplate.objects.filter(name__iexact=identifier).first()
+                or CardTemplate.objects.filter(name__icontains=identifier).first()
+            )
+            return None, tpl
+
+        user_card, template = await find_card()
+        if not template:
             await interaction.followup.send(
-                f"Could not find any player matching **{player_name}**.",
+                f"Could not find any player or card matching **{identifier}**.",
                 ephemeral=True,
             )
             return
 
-        image_buffer = await asyncio.to_thread(generate_card_image, card)
-        file = discord.File(fp=image_buffer, filename=f"{card.name}.png")
+        image_buffer = await asyncio.to_thread(generate_card_image, template)
+        file = discord.File(fp=image_buffer, filename=f"{template.name}.png")
 
-        embed = discord.Embed(
-            title=f"Player Info: {card.name}",
-            color=discord.Color.blue(),
-        )
-        embed.add_field(name="Position", value=card.position, inline=True)
-        embed.add_field(name="OVR", value=str(card.ovr), inline=True)
-        embed.add_field(name="Rarity", value=card.rarity, inline=True)
-        embed.add_field(name="Attack", value=str(card.attack_stat), inline=True)
-        embed.add_field(name="Defence", value=str(card.defence_stat), inline=True)
-        embed.add_field(name="Club", value=card.club, inline=True)
+        title = f"Player Info: {template.display_name}"
+        if user_card:
+            title = f"Card #{user_card.card_id}: {template.display_name}"
+
+        embed = discord.Embed(title=title, color=discord.Color.blue())
+        if user_card:
+            embed.add_field(name="Owner", value=user_card.owner.username, inline=True)
+            embed.add_field(name="Card ID", value=user_card.card_id, inline=True)
+
+        embed.add_field(name="Position", value=template.position, inline=True)
+        embed.add_field(name="OVR", value=str(template.ovr), inline=True)
+        embed.add_field(name="Rarity", value=template.rarity, inline=True)
+        embed.add_field(name="Attack", value=str(template.attack_stat), inline=True)
+        embed.add_field(name="Defence", value=str(template.defence_stat), inline=True)
+        embed.add_field(name="Club", value=template.club, inline=True)
         embed.add_field(
-            name="Card Type", value=card.get_card_type_display(), inline=True
+            name="Card Type", value=template.get_card_type_display(), inline=True
         )
-        embed.set_image(url=f"attachment://{card.name}.png")
+        embed.set_image(url=f"attachment://{template.name}.png")
 
         await interaction.followup.send(file=file, embed=embed)
 

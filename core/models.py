@@ -6,7 +6,7 @@ from django.dispatch import receiver
 
 
 def generate_short_id():
-    return uuid.uuid4().hex[:8].upper()
+    return "TEMP"
 
 
 class DiscordUser(models.Model):
@@ -73,6 +73,12 @@ class CardTemplate(models.Model):
     card_type = models.CharField(max_length=10, choices=CARD_TYPES, default="BASE")
     image_base = models.ImageField(upload_to="card_templates/", blank=True, null=True)
 
+    @property
+    def display_name(self):
+        if self.event_name and self.event_name.lower() != "base":
+            return f"{self.name} ({self.event_name})"
+        return self.name
+
     def __str__(self):
         return f"{self.name} - {self.ovr} {self.rarity} ({self.card_type})"
 
@@ -95,9 +101,14 @@ class UserCard(models.Model):
     caught_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
+        is_new = self.pk is None
         if not self.card_id:
-            self.card_id = uuid.uuid4().hex[:8].upper()
+            self.card_id = "TEMP"
         super().save(*args, **kwargs)
+        if is_new and (not self.card_id or self.card_id == "TEMP"):
+            from core.utils import to_base36
+            self.card_id = to_base36(self.id)
+            super().save(update_fields=["card_id"])
 
     def __str__(self):
         return f"[{self.card_id}] {self.owner.username}'s {self.template.name}"

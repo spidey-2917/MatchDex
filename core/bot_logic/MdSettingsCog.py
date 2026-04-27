@@ -2,6 +2,7 @@ import io
 import json
 
 import discord
+from asgiref.sync import sync_to_async
 from discord import app_commands
 from discord.ext import commands
 
@@ -117,6 +118,101 @@ class MdSettingsCog(commands.Cog, name="Settings"):
         await interaction.followup.send(
             "Here is your requested data export:", file=file, ephemeral=True
         )
+
+
+    @md_group.command(
+        name="list", description="Show a list of your cards with sorting and selection"
+    )
+    @app_commands.choices(
+        sort_by=[
+            app_commands.Choice(name="OVR", value="ovr"),
+            app_commands.Choice(name="Rarity", value="rarity"),
+            app_commands.Choice(name="Card Type", value="type"),
+        ]
+    )
+    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr"):
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id,
+            defaults={"username": interaction.user.name},
+        )
+
+        @sync_to_async
+        def get_cards():
+            qs = UserCard.objects.filter(owner=user).select_related("template")
+            if sort_by == "ovr":
+                qs = qs.order_by("-template__ovr")
+            elif sort_by == "rarity":
+                qs = qs.order_by("template__rarity", "-template__ovr")
+            elif sort_by == "type":
+                qs = qs.order_by("template__card_type", "-template__ovr")
+            return list(qs[:25])  # Select limited to 25 items
+
+        cards = await get_cards()
+        if not cards:
+            return await interaction.response.send_message(
+                "You have no cards!", ephemeral=True
+            )
+
+        view = CardListView(cards, self.bot)
+        await interaction.response.send_message(
+            "Select a card from the list to view its details:",
+            view=view,
+            ephemeral=True,
+        )
+
+
+class CardSelect(discord.ui.Select):
+    def __init__(self, cards, bot):
+        options = [
+            discord.SelectOption(
+                label=f"{c.template.display_name} ({c.template.ovr})",
+                description=f"ID: {c.card_id} | {c.template.rarity}",
+                value=c.card_id,
+            )
+            for c in cards[:25]
+        ]
+        super().__init__(placeholder="Select a card to view...", options=options)
+        self.bot = bot
+
+    async def callback(self, interaction: discord.Interaction):
+        from core.models import UserCard
+        from core.utils import generate_card_image
+        import asyncio
+
+        await interaction.response.defer()
+
+        card_id = self.values[0]
+        card = (
+            await UserCard.objects.filter(card_id=card_id)
+            .select_related("template", "owner")
+            .afirst()
+        )
+        if not card:
+            return await interaction.followup.send("Card not found.", ephemeral=True)
+
+        image_buffer = await asyncio.to_thread(generate_card_image, card.template)
+        file = discord.File(fp=image_buffer, filename=f"{card.template.name}.png")
+
+        embed = discord.Embed(
+            title=f"Card #{card.card_id}: {card.template.display_name}",
+            color=discord.Color.blue(),
+        )
+        embed.add_field(name="Owner", value=card.owner.username, inline=True)
+        embed.add_field(name="Position", value=card.template.position, inline=True)
+        embed.add_field(name="OVR", value=str(card.template.ovr), inline=True)
+        embed.add_field(name="Rarity", value=card.template.rarity, inline=True)
+        embed.add_field(
+            name="Card Type", value=card.template.get_card_type_display(), inline=True
+        )
+        embed.set_image(url=f"attachment://{card.template.name}.png")
+
+        await interaction.followup.send(file=file, embed=embed)
+
+
+class CardListView(discord.ui.View):
+    def __init__(self, cards, bot):
+        super().__init__(timeout=60)
+        self.add_item(CardSelect(cards, bot))
 
 
 async def setup(bot):
