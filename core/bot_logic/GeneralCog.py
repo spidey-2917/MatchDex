@@ -10,60 +10,6 @@ from core.models import CardTemplate, DiscordUser, FavouriteCard, UserCard
 from core.utils import generate_card_image, player_autocomplete
 
 
-class CollectionPagination(discord.ui.View):
-    def __init__(self, user, cards, favourited_ids):
-        super().__init__(timeout=60)
-        self.user = user
-        self.cards = cards
-        self.favourited_ids = favourited_ids
-        self.page = 0
-        self.per_page = 10
-        self.update_buttons()
-
-    def update_buttons(self):
-        self.prev_button.disabled = self.page == 0
-        self.next_button.disabled = (self.page + 1) * self.per_page >= len(self.cards)
-
-    @discord.ui.button(label="Previous", style=discord.ButtonStyle.gray)
-    async def prev_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        self.page -= 1
-        await self.refresh(interaction)
-
-    @discord.ui.button(label="Next", style=discord.ButtonStyle.gray)
-    async def next_button(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        self.page += 1
-        await self.refresh(interaction)
-
-    async def refresh(self, interaction):
-        self.update_buttons()
-        embed = self.create_embed()
-        await interaction.response.edit_message(embed=embed, view=self)
-
-    def create_embed(self):
-        start = self.page * self.per_page
-        end = start + self.per_page
-        page_cards = self.cards[start:end]
-
-        embed = discord.Embed(
-            title=f"{self.user.name}'s Collection", color=discord.Color.blue()
-        )
-        for card in page_cards:
-            heart = " ❤️" if card.id in self.favourited_ids else ""
-            embed.add_field(
-                name=f"{card.template.display_name} ({card.template.position}){heart}",
-                value=(
-                    f"OVR: {card.template.ovr} | Rarity: {card.template.rarity} "
-                    f"| ID: {card.card_id}"
-                ),
-                inline=False,
-            )
-        total_pages = max(1, (len(self.cards) - 1) // self.per_page + 1)
-        embed.set_footer(text=f"Page {self.page + 1} of {total_pages}")
-        return embed
 
 
 class GeneralCog(commands.Cog, name="General"):
@@ -88,70 +34,90 @@ class GeneralCog(commands.Cog, name="General"):
         embed.add_field(name="Cards Caught", value=user.cards_collected)
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="collection", description="Show your card collection")
-    @app_commands.choices(
-        sort_by=[
-            app_commands.Choice(name="OVR (Highest)", value="ovr"),
-            app_commands.Choice(name="Rarity", value="rarity"),
-            app_commands.Choice(name="Catch Date (Newest)", value="newest"),
-            app_commands.Choice(name="Card Type (Events)", value="type"),
-            app_commands.Choice(name="Favourites Only", value="favourites"),
-        ]
-    )
-    async def collection(
-        self,
-        interaction: discord.Interaction,
-        sort_by: str = "ovr",
-        player: str = None,
-    ):
-        user, _ = await DiscordUser.objects.aget_or_create(
-            discord_id=interaction.user.id,
-            defaults={"username": interaction.user.name},
+    @app_commands.command(name="collection", description="Show your card collection summary")
+    async def collection(self, interaction: discord.Interaction, user: discord.Member = None):
+        await interaction.response.defer()
+        
+        target_user = user or interaction.user
+        db_user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=target_user.id,
+            defaults={"username": target_user.name},
         )
 
+        from core.models import TradeItem, UserCard
+        from django.db.models import Count
+
         @sync_to_async
-        def get_user_cards():
-            qs = UserCard.objects.filter(owner=user).select_related("template")
-
-            if player:
-                qs = qs.filter(template__name__icontains=player)
-
-            if sort_by == "ovr":
-                qs = qs.order_by("-template__ovr", "-caught_at")
-            elif sort_by == "rarity":
-                qs = qs.order_by("template__rarity", "-template__ovr")
-            elif sort_by == "newest":
-                qs = qs.order_by("-caught_at")
-            elif sort_by == "type":
-                qs = qs.order_by("template__card_type", "-template__ovr")
-            elif sort_by == "favourites":
-                fav_ids = set(
-                    FavouriteCard.objects.filter(owner=user).values_list(
-                        "card_id", flat=True
-                    )
-                )
-                qs = qs.filter(id__in=fav_ids).order_by("-template__ovr")
-
-            # Gather favourite IDs for the heart display
-            favourited = set(
-                FavouriteCard.objects.filter(owner=user).values_list(
-                    "card_id", flat=True
-                )
+        def get_stats():
+            total = UserCard.objects.filter(owner=db_user).count()
+            
+            # Received from trade: Cards the user owns that appear as received in TradeItem
+            received = UserCard.objects.filter(
+                owner=db_user,
+                id__in=TradeItem.objects.filter(receiver=db_user).values('card_id')
+            ).count()
+            
+            caught = total - received
+            
+            event_qs = UserCard.objects.filter(owner=db_user).exclude(template__event_name="Base")
+            total_specials = event_qs.count()
+            
+            event_breakdown = list(
+                event_qs.values('template__event_name')
+                .annotate(count=Count('id'))
+                .order_by('-count')
             )
-            return list(qs), favourited
+            
+            return total, caught, received, total_specials, event_breakdown
 
-        cards, favourited_ids = await get_user_cards()
-        if not cards:
-            msg = (
-                "No favourited cards yet! Use `/favourite <card_id>` to mark some."
-                if sort_by == "favourites"
-                else "Your collection is empty! Go catch some cards."
-            )
-            await interaction.response.send_message(msg, ephemeral=True)
-            return
+        total, caught, received, total_specials, event_breakdown = await get_stats()
 
-        view = CollectionPagination(interaction.user, cards, favourited_ids)
-        await interaction.response.send_message(embed=view.create_embed(), view=view)
+        embed = discord.Embed(
+            title=f"{target_user.display_name}'s Collection",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(
+            name="Total Collection",
+            value=f"**Total:** {total:,} ({caught:,} caught, {received:,} received from trade)\n"
+                  f"**Total Events:** {total_specials:,}",
+            inline=False
+        )
+
+        if event_breakdown:
+            event_text = ""
+            # Map common event names to emojis if possible, else generic
+            emoji_map = {
+                "Shiny": "✨",
+                "Christmas": "🎄",
+                "Christmas_white": "❄️",
+                "Ramadan_white": "☪️",
+                "Diwali_white": "🕯️",
+                "Halloween_white": "🦇",
+                "Eid_white": "🌙",
+                "Icon": "🏆",
+                "TOTY": "⭐",
+                "TOTS": "🔥"
+            }
+            
+            for item in event_breakdown:
+                name = item['template__event_name']
+                count = item['count']
+                emoji = emoji_map.get(name, "🔹")
+                # Fallback for names containing the key
+                if emoji == "🔹":
+                    for key, val in emoji_map.items():
+                        if key.lower() in name.lower():
+                            emoji = val
+                            break
+                
+                event_text += f"{emoji} {name}: {count:,}\n"
+            
+            embed.add_field(name="Events:", value=event_text or "None", inline=False)
+        else:
+            embed.add_field(name="Events:", value="No event cards collected yet.", inline=False)
+
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(
         name="last", description="Show your most recently caught card"

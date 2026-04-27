@@ -188,9 +188,10 @@ class MdSettingsCog(commands.Cog, name="Settings"):
     )
     @app_commands.choices(
         sort_by=[
-            app_commands.Choice(name="OVR", value="ovr"),
+            app_commands.Choice(name="OVR (Highest)", value="ovr"),
             app_commands.Choice(name="Rarity", value="rarity"),
             app_commands.Choice(name="Card Type", value="type"),
+            app_commands.Choice(name="Catch Date (Newest)", value="date"),
         ]
     )
     async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr"):
@@ -199,43 +200,22 @@ class MdSettingsCog(commands.Cog, name="Settings"):
             defaults={"username": interaction.user.name},
         )
 
-        @sync_to_async
-        def get_cards():
-            qs = UserCard.objects.filter(owner=user).select_related("template")
-            if sort_by == "ovr":
-                qs = qs.order_by("-template__ovr")
-            elif sort_by == "rarity":
-                qs = qs.order_by("template__rarity", "-template__ovr")
-            elif sort_by == "type":
-                qs = qs.order_by("template__card_type", "-template__ovr")
-            return list(qs[:25])  # Select limited to 25 items
-
-        cards = await get_cards()
-        if not cards:
-            return await interaction.response.send_message(
-                "You have no cards!", ephemeral=True
-            )
-
-        view = CardListView(cards, self.bot)
-        await interaction.response.send_message(
-            "Select a card from the list to view its details:",
-            view=view,
-            ephemeral=False,
-        )
+        # We'll initialize the view which will handle fetching and pagination
+        view = CardListView(user, sort_by, self.bot)
+        await view.update_view(interaction)
 
 
 class CardSelect(discord.ui.Select):
-    def __init__(self, cards, bot):
+    def __init__(self, cards):
         options = [
             discord.SelectOption(
                 label=f"{c.template.display_name} ({c.template.ovr})",
                 description=f"ID: {c.card_id} | {c.template.rarity}",
                 value=c.card_id,
             )
-            for c in cards[:25]
+            for c in cards
         ]
         super().__init__(placeholder="Select a card to view...", options=options)
-        self.bot = bot
 
     async def callback(self, interaction: discord.Interaction):
         from core.models import UserCard
@@ -273,9 +253,83 @@ class CardSelect(discord.ui.Select):
 
 
 class CardListView(discord.ui.View):
-    def __init__(self, cards, bot):
-        super().__init__(timeout=60)
-        self.add_item(CardSelect(cards, bot))
+    def __init__(self, user_db, sort_by, bot):
+        super().__init__(timeout=180)
+        self.user_db = user_db
+        self.sort_by = sort_by
+        self.bot = bot
+        self.page = 0
+        self.page_size = 25
+        self.total_cards = 0
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_db.discord_id:
+            await interaction.response.send_message(
+                "Only the user who opened this list can control it.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def get_page_cards(self):
+        @sync_to_async
+        def fetch():
+            qs = UserCard.objects.filter(owner=self.user_db).select_related("template")
+            if self.sort_by == "ovr":
+                qs = qs.order_by("-template__ovr", "-caught_at")
+            elif self.sort_by == "rarity":
+                qs = qs.order_by("template__rarity", "-template__ovr")
+            elif self.sort_by == "type":
+                qs = qs.order_by("template__card_type", "-template__ovr")
+            elif self.sort_by == "date":
+                qs = qs.order_by("-caught_at")
+            
+            self.total_cards = qs.count()
+            start = self.page * self.page_size
+            end = start + self.page_size
+            return list(qs[start:end])
+
+        return await fetch()
+
+    async def update_view(self, interaction: discord.Interaction):
+        cards = await self.get_page_cards()
+        if not cards and self.page == 0:
+            if interaction.response.is_done():
+                await interaction.followup.send("You have no cards!", ephemeral=True)
+            else:
+                await interaction.response.send_message("You have no cards!", ephemeral=True)
+            return
+
+        self.clear_items()
+        if cards:
+            self.add_item(CardSelect(cards))
+
+        # Add pagination buttons
+        prev_btn = discord.ui.Button(label="Previous", style=discord.ButtonStyle.secondary, disabled=(self.page == 0))
+        next_btn = discord.ui.Button(label="Next", style=discord.ButtonStyle.secondary, disabled=((self.page + 1) * self.page_size >= self.total_cards))
+
+        async def prev_callback(it: discord.Interaction):
+            self.page -= 1
+            await it.response.defer()
+            await self.update_view(interaction)
+
+        async def next_callback(it: discord.Interaction):
+            self.page += 1
+            await it.response.defer()
+            await self.update_view(interaction)
+
+        prev_btn.callback = prev_callback
+        next_btn.callback = next_callback
+        self.add_item(prev_btn)
+        self.add_item(next_btn)
+
+        total_pages = (self.total_cards + self.page_size - 1) // self.page_size
+        content = f"**{self.user_db.username}'s Cards** (Sorted by {self.sort_by.upper()})\n" \
+                  f"Page {self.page + 1} of {max(1, total_pages)} ({self.total_cards} cards total)"
+
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=content, view=self)
+        else:
+            await interaction.response.send_message(content=content, view=self)
 
 
 async def setup(bot):
