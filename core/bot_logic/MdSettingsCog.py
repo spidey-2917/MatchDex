@@ -194,14 +194,14 @@ class MdSettingsCog(commands.Cog, name="Settings"):
             app_commands.Choice(name="Catch Date (Newest)", value="date"),
         ]
     )
-    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr"):
+    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False):
         user, _ = await DiscordUser.objects.aget_or_create(
             discord_id=interaction.user.id,
             defaults={"username": interaction.user.name},
         )
 
         # We'll initialize the view which will handle fetching and pagination
-        view = CardListView(user, sort_by, self.bot)
+        view = CardListView(user, sort_by, self.bot, reverse)
         await view.update_view(interaction)
 
 
@@ -281,11 +281,12 @@ class SkipPageModal(discord.ui.Modal, title="Skip to Page"):
 
 
 class CardListView(discord.ui.View):
-    def __init__(self, user_db, sort_by, bot):
+    def __init__(self, user_db, sort_by, bot, reverse=False):
         super().__init__(timeout=180)
         self.user_db = user_db
         self.sort_by = sort_by
         self.bot = bot
+        self.reverse = reverse
         self.page = 0
         self.page_size = 25
         self.total_cards = 0
@@ -302,14 +303,29 @@ class CardListView(discord.ui.View):
         @sync_to_async
         def fetch():
             qs = UserCard.objects.filter(owner=self.user_db).select_related("template")
+            
             if self.sort_by == "ovr":
-                qs = qs.order_by("-template__ovr", "-caught_at")
+                order = ["-template__ovr", "-caught_at"]
+                if self.reverse:
+                    order = ["template__ovr", "caught_at"]
+                qs = qs.order_by(*order)
             elif self.sort_by == "rarity":
-                qs = qs.order_by("template__rarity", "-template__ovr")
+                # Note: This is alphabetical by default. 
+                # Reverse flips the alphabetical order.
+                order = ["-template__rarity", "-template__ovr"]
+                if self.reverse:
+                    order = ["template__rarity", "template__ovr"]
+                qs = qs.order_by(*order)
             elif self.sort_by == "type":
-                qs = qs.order_by("template__card_type", "-template__ovr")
+                order = ["-template__card_type", "-template__ovr"]
+                if self.reverse:
+                    order = ["template__card_type", "template__ovr"]
+                qs = qs.order_by(*order)
             elif self.sort_by == "date":
-                qs = qs.order_by("-caught_at")
+                order = ["-caught_at"]
+                if self.reverse:
+                    order = ["caught_at"]
+                qs = qs.order_by(*order)
             
             self.total_cards = qs.count()
             start = self.page * self.page_size
@@ -398,7 +414,7 @@ class CardListView(discord.ui.View):
             select.row = 2
             self.add_item(select)
 
-        content = f"**{self.user_db.username}'s Cards** (Sorted by {self.sort_by.upper()})\n" \
+        content = f"**{self.user_db.username}'s Cards** (Sorted by {self.sort_by.upper()}{' REVERSED' if self.reverse else ''})\n" \
                   f"Page {self.page + 1} of {max(1, total_pages)} ({self.total_cards} cards total)"
 
         if interaction.response.is_done():
