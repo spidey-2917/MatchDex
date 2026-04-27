@@ -50,8 +50,8 @@ class CatchModal(discord.ui.Modal, title="Catch Player"):
             await user.asave()
 
             await interaction.response.send_message(
-                f"🎉 {interaction.user.mention} caught **{self.card_template.display_name}** "
-                f"({self.card_template.rarity})! (ID: `{user_card.card_id}`)"
+                f"{interaction.user.mention} You caught **{self.card_template.display_name}**! "
+                f"(#{user_card.card_id}, {self.card_template.rarity})"
             )
             if interaction.message:
                 await interaction.message.edit(view=None)

@@ -16,7 +16,7 @@ from core.models import (
     UserCard,
 )
 from core.settings import settings
-from core.utils import generate_card_image, player_autocomplete
+from core.utils import generate_card_image, player_autocomplete, template_autocomplete
 
 log = logging.getLogger("matchdex.admin")
 
@@ -122,8 +122,16 @@ class AdminCog(commands.Cog, name="Admin"):
         )
 
     @spawn_group.command(name="card", description="Spawn a specific named player card")
-    @app_commands.autocomplete(player_name=player_autocomplete)
-    async def spawn_card(self, interaction: discord.Interaction, player_name: str):
+    @app_commands.autocomplete(player_name=template_autocomplete)
+    @app_commands.describe(
+        player_name="The player to spawn", event="Specific event name (optional)"
+    )
+    async def spawn_card(
+        self,
+        interaction: discord.Interaction,
+        player_name: str,
+        event: str | None = None,
+    ):
         if not await self.check_admin(interaction):
             return
 
@@ -131,12 +139,23 @@ class AdminCog(commands.Cog, name="Admin"):
 
         @sync_to_async
         def find():
-            return CardTemplate.objects.filter(name__icontains=player_name).first()
+            # Handle autocomplete value (format: Name|Event)
+            if "|" in player_name:
+                name, ev = player_name.split("|")
+                return CardTemplate.objects.filter(name=name, event_name=ev).first()
+
+            qs = CardTemplate.objects.filter(name__icontains=player_name)
+            if event:
+                qs = qs.filter(event_name__icontains=event)
+            return qs.first()
 
         card = await find()
         if not card:
+            search_str = f"**'{player_name}'**"
+            if event:
+                search_str += f" in event **'{event}'**"
             await interaction.followup.send(
-                f"No card found matching **'{player_name}'**.", ephemeral=True
+                f"No card found matching {search_str}.", ephemeral=True
             )
             return
 
@@ -155,7 +174,8 @@ class AdminCog(commands.Cog, name="Admin"):
 
         view = CatchView(card)
         await interaction.followup.send(
-            f"Spawning **{card.name}** ({card.ovr} OVR, {card.rarity})…", ephemeral=True
+            f"Spawning **{card.display_name}** ({card.ovr} OVR, {card.rarity})…",
+            ephemeral=True,
         )
         message = await interaction.channel.send(file=file, embed=embed, view=view)
         view.message = message

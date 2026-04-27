@@ -2,7 +2,9 @@ import io
 import os
 import random
 
+import discord
 from asgiref.sync import sync_to_async
+from django.db import models
 from discord import app_commands
 from django.conf import settings as django_settings
 from PIL import Image, ImageDraw, ImageFont
@@ -12,19 +14,55 @@ from core.settings import settings
 from .models import CardTemplate, DiscordUser, UserCard
 
 
-async def player_autocomplete(interaction, current: str):
-    @sync_to_async
-    def get_matches():
-        if current:
-            qs = CardTemplate.objects.filter(name__icontains=current)[:25]
-        else:
-            qs = CardTemplate.objects.all()[:25]
-        return [
-            app_commands.Choice(name=f"{c.name} ({c.ovr} OVR)", value=c.name)
-            for c in qs
-        ]
+async def player_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    from core.models import DiscordUser, UserCard
 
-    return await get_matches()
+    user, _ = await DiscordUser.objects.aget_or_create(
+        discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+    )
+
+    @sync_to_async
+    def get_choices():
+        qs = UserCard.objects.filter(owner=user).select_related("template")
+        if current:
+            # Search by ID or Name
+            qs = qs.filter(
+                models.Q(card_id__icontains=current)
+                | models.Q(template__name__icontains=current)
+            )
+        return list(qs[:25])
+
+    cards = await get_choices()
+    choices = []
+    for c in cards:
+        name = c.template.display_name
+        label = f"#{c.card_id} {name} ({c.template.ovr} OVR)"
+        choices.append(app_commands.Choice(name=label, value=c.card_id))
+    return choices
+
+
+async def template_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    from core.models import CardTemplate
+
+    @sync_to_async
+    def get_choices():
+        qs = CardTemplate.objects.all()
+        if current:
+            qs = qs.filter(name__icontains=current)
+        return list(qs[:25])
+
+    templates = await get_choices()
+    return [
+        app_commands.Choice(
+            name=f"{t.display_name} ({t.ovr} OVR)",
+            value=t.name if not t.event_name or t.event_name.lower() == "base" else f"{t.name}|{t.event_name}"
+        )
+        for t in templates
+    ]
 
 
 SOFIFA_POS_MAP = {

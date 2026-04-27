@@ -6,7 +6,8 @@ from asgiref.sync import sync_to_async
 from discord import app_commands
 from discord.ext import commands
 
-from core.models import DiscordUser, Lineup, Trade, TradeItem, UserCard
+from core.models import DiscordUser, Lineup, Trade, TradeItem, UserCard, CardTemplate
+from core.utils import player_autocomplete
 
 
 class ConfirmDeleteView(discord.ui.View):
@@ -121,6 +122,68 @@ class MdSettingsCog(commands.Cog, name="Settings"):
 
 
     @md_group.command(
+        name="show", description="Show detailed information about a player card"
+    )
+    @app_commands.autocomplete(identifier=player_autocomplete)
+    @app_commands.describe(identifier="The MatchDex card you want to inspect")
+    async def show(self, interaction: discord.Interaction, identifier: str):
+        from core.utils import generate_card_image
+        import asyncio
+
+        await interaction.response.defer()
+
+        @sync_to_async
+        def find_card():
+            # 1. Try finding by unique UserCard ID
+            uc = (
+                UserCard.objects.filter(card_id__iexact=identifier)
+                .select_related("template", "owner")
+                .first()
+            )
+            if uc:
+                return uc, uc.template
+
+            # 2. Try finding by Template name
+            tpl = (
+                CardTemplate.objects.filter(name__iexact=identifier).first()
+                or CardTemplate.objects.filter(name__icontains=identifier).first()
+            )
+            return None, tpl
+
+        user_card, template = await find_card()
+        if not template:
+            await interaction.followup.send(
+                f"Could not find any player or card matching **{identifier}**.",
+                ephemeral=True,
+            )
+            return
+
+        image_buffer = await asyncio.to_thread(generate_card_image, template)
+        file = discord.File(fp=image_buffer, filename=f"{template.name}.png")
+
+        title = f"Player Info: {template.display_name}"
+        if user_card:
+            title = f"Card #{user_card.card_id}: {template.display_name}"
+
+        embed = discord.Embed(title=title, color=discord.Color.blue())
+        if user_card:
+            embed.add_field(name="Owner", value=user_card.owner.username, inline=True)
+            embed.add_field(name="Card ID", value=user_card.card_id, inline=True)
+
+        embed.add_field(name="Position", value=template.position, inline=True)
+        embed.add_field(name="OVR", value=str(template.ovr), inline=True)
+        embed.add_field(name="Rarity", value=template.rarity, inline=True)
+        embed.add_field(name="Attack", value=str(template.attack_stat), inline=True)
+        embed.add_field(name="Defence", value=str(template.defence_stat), inline=True)
+        embed.add_field(name="Club", value=template.club, inline=True)
+        embed.add_field(
+            name="Card Type", value=template.get_card_type_display(), inline=True
+        )
+        embed.set_image(url=f"attachment://{template.name}.png")
+
+        await interaction.followup.send(file=file, embed=embed)
+
+    @md_group.command(
         name="list", description="Show a list of your cards with sorting and selection"
     )
     @app_commands.choices(
@@ -157,7 +220,7 @@ class MdSettingsCog(commands.Cog, name="Settings"):
         await interaction.response.send_message(
             "Select a card from the list to view its details:",
             view=view,
-            ephemeral=True,
+            ephemeral=False,
         )
 
 
