@@ -185,7 +185,7 @@ class AdminCog(commands.Cog, name="Admin"):
     # ══════════════════════════════════════════════════════════
 
     @admin_group.command(name="give", description="Give a specific card to a user")
-    @app_commands.autocomplete(player_search=player_autocomplete)
+    @app_commands.autocomplete(player_search=template_autocomplete)
     async def give(
         self, interaction: discord.Interaction, user: discord.Member, player_search: str
     ):
@@ -198,6 +198,11 @@ class AdminCog(commands.Cog, name="Admin"):
 
         @sync_to_async
         def find():
+            # Handle autocomplete value (format: Name|Event)
+            if "|" in player_search:
+                name, ev = player_search.split("|", 1)
+                return CardTemplate.objects.filter(name=name, event_name=ev).first()
+            # Fallback to name search for manual typing
             return CardTemplate.objects.filter(name__icontains=player_search).first()
 
         card = await find()
@@ -211,11 +216,8 @@ class AdminCog(commands.Cog, name="Admin"):
         db_user.cards_collected += 1
         await db_user.asave()
 
-        # Clean up in case this card instance was somehow moved manually 
-        # (Though UserCard.acreate creates a NEW instance, so we are safe here)
-        
         await interaction.response.send_message(
-            f"Gave **{card.name}** ({card.rarity}) to {user.mention}!", ephemeral=True
+            f"Gave **{card.display_name}** ({card.rarity}) to {user.mention}!", ephemeral=True
         )
 
     @admin_group.command(

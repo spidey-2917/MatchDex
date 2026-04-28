@@ -29,17 +29,18 @@ class GuildConfigCog(commands.Cog, name="Server Config"):
         settings.spawn_channel_id = channel.id
         await settings.asave()
 
-        await interaction.followup.send(
-            f"✅ Spawn channel successfully set to {channel.mention}. I've spawned a card there to start the cycle!"
-        )
-
-        # Trigger an immediate spawn
+        # Reset spawn counters so the natural cycle starts fresh — no free spawns
         spawning_cog = self.bot.get_cog("Spawning")
         if spawning_cog:
-            try:
-                await spawning_cog._spawn_card(channel)
-            except Exception:
-                pass
+            import time as _time
+            guild_id = interaction.guild_id
+            spawning_cog.message_counts[guild_id] = 0
+            spawning_cog.last_spawn_time[guild_id] = _time.time()
+            spawning_cog._roll_threshold(guild_id)
+
+        await interaction.followup.send(
+            f"✅ Spawn channel set to {channel.mention}. Cards will start appearing naturally as members chat!"
+        )
 
     @config_group.command(
         name="log_channel", description="Set the admin logging channel for this server"

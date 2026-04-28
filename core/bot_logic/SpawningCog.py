@@ -126,6 +126,10 @@ class SpawningCog(commands.Cog, name="Spawning"):
         if message.author.bot or not message.guild:
             return
 
+        # Servers need at least 50 members to trigger wild spawns
+        if message.guild.member_count < 50:
+            return
+
         guild_id = message.guild.id
         self.message_counts[guild_id] = self.message_counts.get(guild_id, 0) + 1
         count = self.message_counts[guild_id]
@@ -203,10 +207,18 @@ class SpawningCog(commands.Cog, name="Spawning"):
 
     @staticmethod
     def _pick_card(rarity: str):
-        chosen_type = random.choices(["BASE", "ICON"], weights=[95, 5], k=1)[0]
+        # Event cards now have a small chance to appear in wild spawns
+        chosen_type = random.choices(
+            ["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1
+        )[0]
         cards = CardTemplate.objects.filter(card_type=chosen_type, rarity=rarity)
         if not cards.exists():
-            return CardTemplate.objects.filter(card_type=chosen_type).order_by("?").first()
+            # Fallback: any card of this type regardless of rarity
+            fallback = CardTemplate.objects.filter(card_type=chosen_type)
+            if fallback.exists():
+                return fallback.order_by("?").first()
+            # Last resort: any BASE card
+            return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
         return cards.order_by("?").first()
 
 

@@ -307,6 +307,19 @@ class PromoCode(models.Model):
         return self.code
 
 
+class PromoCodeRedemption(models.Model):
+    """Tracks which users have redeemed which promo codes — one redemption per user per code."""
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="promo_redemptions")
+    promo_code = models.ForeignKey(PromoCode, on_delete=models.CASCADE, related_name="redemptions")
+    redeemed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "promo_code")
+
+    def __str__(self):
+        return f"{self.user.username} redeemed {self.promo_code.code}"
+
+
 class ServerSettings(models.Model):
     guild_id = models.BigIntegerField(unique=True)
     spawn_channel_id = models.BigIntegerField(null=True, blank=True)

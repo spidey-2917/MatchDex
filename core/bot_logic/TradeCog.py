@@ -1,5 +1,6 @@
 import discord
 from asgiref.sync import sync_to_async
+from django.db import models
 from discord import app_commands
 from discord.ext import commands
 
@@ -415,6 +416,70 @@ class TradeCog(commands.Cog, name="Trading"):
         view = TradeActionView(tid, self)
         await t["message"].edit(embed=self.build_trade_embed(tid), view=view)
         await interaction.followup.send("Card removed from your offer.", ephemeral=True)
+
+    @trade_group.command(
+        name="cancel", description="Cancel your current active trade"
+    )
+    async def trade_cancel(self, interaction: discord.Interaction):
+        # Find any active trade this user is part of
+        trade_id = None
+        trade_data = None
+        for tid, t in ACTIVE_TRADES.items():
+            if interaction.user.id in (t["initiator"].id, t["receiver"].id):
+                trade_id = tid
+                trade_data = t
+                break
+
+        if not trade_id or not trade_data:
+            # Also check the database for stuck PENDING trades
+            from core.models import Trade
+            stuck_trades = Trade.objects.filter(
+                status="PENDING"
+            ).filter(
+                models.Q(initiator_id=interaction.user.id) | models.Q(receiver_id=interaction.user.id)
+            )
+            cancelled_count = 0
+            async for stuck in stuck_trades:
+                stuck.status = "CANCELLED"
+                await stuck.asave()
+                cancelled_count += 1
+
+            if cancelled_count > 0:
+                await interaction.response.send_message(
+                    f"🧹 Cleared **{cancelled_count}** stuck trade(s) from the database. You can start a new trade now!",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    "You don't have any active trades to cancel.", ephemeral=True
+                )
+            return
+
+        # Try to update the trade message
+        try:
+            if trade_data.get("message"):
+                view = TradeActionView(trade_id, self)
+                for child in view.children:
+                    child.disabled = True
+                await trade_data["message"].edit(
+                    content=f"❌ Trade cancelled by {interaction.user.mention}.",
+                    view=view,
+                )
+        except (discord.NotFound, discord.HTTPException):
+            pass  # Message might be deleted already, that's fine
+
+        # Update database
+        db_trade = await Trade.objects.aget(id=trade_data["db_id"])
+        db_trade.status = "CANCELLED"
+        await db_trade.asave()
+
+        # Clean up memory
+        del ACTIVE_TRADES[trade_id]
+
+        await interaction.response.send_message(
+            "✅ Trade cancelled successfully. You can start a new trade now!",
+            ephemeral=True,
+        )
 
     async def execute_trade(self, tid):
         t = ACTIVE_TRADES.pop(tid, None)

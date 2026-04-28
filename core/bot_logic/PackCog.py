@@ -49,6 +49,7 @@ class PackCog(commands.Cog, name="Packs"):
 
         @sync_to_async
         def get_card():
+            # First: try exact rarity + type match
             qs = CardTemplate.objects.filter(rarity=rarity)
             if card_filter_type:
                 if isinstance(card_filter_type, list):
@@ -56,16 +57,20 @@ class PackCog(commands.Cog, name="Packs"):
                 else:
                     qs = qs.filter(card_type=card_filter_type)
 
-            if not qs.exists():
-                # Fallback to any card of that type
-                qs = CardTemplate.objects.all()
-                if card_filter_type:
-                    if isinstance(card_filter_type, list):
-                        qs = qs.filter(card_type__in=card_filter_type)
-                    else:
-                        qs = qs.filter(card_type=card_filter_type)
+            if qs.exists():
+                return qs.order_by("?").first()
 
-            return qs.order_by("?").first()
+            # Fallback: any rarity but keep the correct card type
+            if card_filter_type:
+                if isinstance(card_filter_type, list):
+                    fallback = CardTemplate.objects.filter(card_type__in=card_filter_type)
+                else:
+                    fallback = CardTemplate.objects.filter(card_type=card_filter_type)
+                if fallback.exists():
+                    return fallback.order_by("?").first()
+
+            # Last resort: any card at all
+            return CardTemplate.objects.order_by("?").first()
 
         card = await get_card()
 
@@ -135,7 +140,7 @@ class PackCog(commands.Cog, name="Packs"):
 
     @app_commands.command(name="promo", description="Enter a promo code for a reward")
     async def promo(self, interaction: discord.Interaction, code: str):
-        from core.models import PromoCode
+        from core.models import PromoCode, PromoCodeRedemption
 
         promo = await PromoCode.objects.select_related("reward_card").filter(code=code).afirst()
         if not promo:
@@ -160,10 +165,23 @@ class PackCog(commands.Cog, name="Packs"):
             discord_id=interaction.user.id, defaults={"username": interaction.user.name}
         )
 
+        # Check if this user already redeemed this code
+        already_used = await PromoCodeRedemption.objects.filter(
+            user=user, promo_code=promo
+        ).aexists()
+        if already_used:
+            await interaction.response.send_message(
+                "You have already redeemed this promo code!", ephemeral=True
+            )
+            return
+
         # Reward logic
         if promo.reward_type == "POINTS":
             user.points += promo.reward_points
             await user.asave()
+            await PromoCodeRedemption.objects.acreate(user=user, promo_code=promo)
+            promo.uses += 1
+            await promo.asave()
             await interaction.response.send_message(
                 f"Promo code redeemed! You received **{promo.reward_points} points**.",
                 ephemeral=True,
@@ -175,7 +193,10 @@ class PackCog(commands.Cog, name="Packs"):
                 await interaction.followup.send("This promo code has no card assigned!", ephemeral=True)
                 return
             await UserCard.objects.acreate(owner=user, template=card_template)
-            
+            await PromoCodeRedemption.objects.acreate(user=user, promo_code=promo)
+            promo.uses += 1
+            await promo.asave()
+
             import asyncio
             image_buffer = await asyncio.to_thread(generate_card_image, card_template)
             file = discord.File(fp=image_buffer, filename=f"promo_{card_template.name}.png")
@@ -190,28 +211,57 @@ class PackCog(commands.Cog, name="Packs"):
 
         elif promo.reward_type.startswith("PACK_"):
             await interaction.response.defer()
-            pack_category = promo.reward_type.split("_")[1].lower()
-            
+            # Parse the pack category from reward_type (e.g. PACK_DAILY → daily)
+            pack_category = promo.reward_type[5:].lower()
+
             rarity = get_random_rarity()
+
             @sync_to_async
             def get_pack_card():
-                qs = CardTemplate.objects.filter(rarity=rarity)
+                # Determine the card type filter based on pack category
+                type_filter = None
                 if pack_category == "daily":
-                    qs = qs.filter(card_type="BASE")
+                    type_filter = "BASE"
                 elif pack_category == "weekly":
-                    qs = qs.filter(card_type="ICON")
+                    type_filter = "ICON"
                 elif pack_category == "event":
-                    qs = qs.filter(card_type="EVENT")
+                    type_filter = "EVENT"
                 elif pack_category == "premium":
-                    qs = qs.filter(card_type__in=["ICON", "EVENT"])
-                
-                if not qs.exists():
-                    return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
-                return qs.order_by("?").first()
-            
+                    type_filter = ["ICON", "EVENT"]
+
+                # First: try exact rarity + type match
+                qs = CardTemplate.objects.filter(rarity=rarity)
+                if type_filter:
+                    if isinstance(type_filter, list):
+                        qs = qs.filter(card_type__in=type_filter)
+                    else:
+                        qs = qs.filter(card_type=type_filter)
+
+                if qs.exists():
+                    return qs.order_by("?").first()
+
+                # Fallback: any rarity but keep the correct card type
+                if type_filter:
+                    if isinstance(type_filter, list):
+                        fallback = CardTemplate.objects.filter(card_type__in=type_filter)
+                    else:
+                        fallback = CardTemplate.objects.filter(card_type=type_filter)
+                    if fallback.exists():
+                        return fallback.order_by("?").first()
+
+                # Last resort: any BASE card
+                return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
+
             card = await get_pack_card()
+            if not card:
+                await interaction.followup.send("No cards available for this promo!", ephemeral=True)
+                return
+
             await UserCard.objects.acreate(owner=user, template=card)
-            
+            await PromoCodeRedemption.objects.acreate(user=user, promo_code=promo)
+            promo.uses += 1
+            await promo.asave()
+
             import asyncio
             image_buffer = await asyncio.to_thread(generate_card_image, card)
             file = discord.File(fp=image_buffer, filename=f"promo_{card.name}.png")
@@ -224,9 +274,12 @@ class PackCog(commands.Cog, name="Packs"):
             embed.set_footer(text=f"OVR: {card.ovr} | Rarity: {card.rarity}")
             await interaction.followup.send(file=file, embed=embed)
 
-        promo.uses += 1
-        await promo.asave()
+        else:
+            await interaction.response.send_message(
+                "Unknown reward type for this promo code.", ephemeral=True
+            )
 
 
 async def setup(bot):
     await bot.add_cog(PackCog(bot))
+

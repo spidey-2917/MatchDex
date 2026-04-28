@@ -9,6 +9,7 @@ from .models import (
     Lineup,
     Logo,
     PromoCode,
+    PromoCodeRedemption,
     ServerSettings,
     UserCard,
     UserLogo,
@@ -69,6 +70,13 @@ class LineupAdmin(admin.ModelAdmin):
 class PromoCodeAdmin(admin.ModelAdmin):
     list_display = ("code", "reward_type", "uses", "max_uses", "expires_at")
     autocomplete_fields = ["reward_card"]
+
+
+@admin.register(PromoCodeRedemption)
+class PromoCodeRedemptionAdmin(admin.ModelAdmin):
+    list_display = ("user", "promo_code", "redeemed_at")
+    list_filter = ("redeemed_at",)
+    search_fields = ("user__username", "promo_code__code")
 
 
 @admin.register(ServerSettings)

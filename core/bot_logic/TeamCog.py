@@ -304,14 +304,21 @@ class TeamCog(commands.Cog, name="Teams"):
                 f_info = FORMATIONS.get(lineup.formation, FORMATIONS["433"])
                 return f"invalid_slot:{f_info['name']}"
 
-            # Find card in collection
+            # Find card in collection — try card_id first (autocomplete sends IDs),
+            # then fall back to name search for manual typing
             user_card = (
-                UserCard.objects.filter(
-                    owner=user, template__name__icontains=player_name
-                )
+                UserCard.objects.filter(owner=user, card_id=player_name)
                 .select_related("template")
                 .first()
             )
+            if not user_card:
+                user_card = (
+                    UserCard.objects.filter(
+                        owner=user, template__name__icontains=player_name
+                    )
+                    .select_related("template")
+                    .first()
+                )
 
             if not user_card:
                 return "no_card"
@@ -533,13 +540,20 @@ class TeamCog(commands.Cog, name="Teams"):
             if not lineup:
                 return "no_lineup"
 
+            # Try card_id first (autocomplete sends IDs), then fall back to name
             user_card = (
-                UserCard.objects.filter(
-                    owner=user, template__name__icontains=player_name
-                )
+                UserCard.objects.filter(owner=user, card_id=player_name)
                 .select_related("template")
                 .first()
             )
+            if not user_card:
+                user_card = (
+                    UserCard.objects.filter(
+                        owner=user, template__name__icontains=player_name
+                    )
+                    .select_related("template")
+                    .first()
+                )
 
             if not user_card:
                 return "no_card"
