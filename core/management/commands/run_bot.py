@@ -215,6 +215,20 @@ class MatchdexBot(commands.AutoShardedBot):
 
         log.info("──── %s is now operational! ────", settings.bot_name)
 
+    # ── Global prefix-command error handler ──────────────────
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        """Handle errors for prefix commands (e.g. !bal)."""
+        if isinstance(error, commands.CommandNotFound):
+            # Optionally send a hint or just ignore to keep logs clean
+            # await ctx.send(f"Command not found. Did you mean to use a slash command? (e.g. `/stats`)", delete_after=10)
+            return
+        
+        if isinstance(error, commands.MissingRequiredArgument):
+            await ctx.send(f"Missing argument: {error.param.name}", delete_after=10)
+            return
+
+        log.error("Prefix command error: %s", error, exc_info=error)
+
     # ── Global application-command error handler ─────────────
     async def on_application_command_error(
         self,
@@ -222,10 +236,14 @@ class MatchdexBot(commands.AutoShardedBot):
         error: app_commands.AppCommandError,
     ):
         async def reply(content: str):
-            if interaction.response.is_done():
-                await interaction.followup.send(content, ephemeral=True)
-            else:
-                await interaction.response.send_message(content, ephemeral=True)
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(content, ephemeral=True)
+                else:
+                    await interaction.response.send_message(content, ephemeral=True)
+            except (discord.NotFound, discord.InteractionResponded):
+                # Interaction expired or already handled
+                pass
 
         # Cooldowns
         if isinstance(error, app_commands.CommandOnCooldown):
@@ -268,10 +286,12 @@ class MatchdexBot(commands.AutoShardedBot):
                 )
                 return
 
-            if isinstance(original, discord.InteractionResponded):
-                log.warning(
-                    "Interaction already responded for /%s",
+            if isinstance(original, (discord.InteractionResponded, discord.NotFound)):
+                # Interaction already responded or expired (Unknown Interaction)
+                log.debug(
+                    "Interaction handled or expired for /%s: %s",
                     interaction.command.qualified_name,
+                    original
                 )
                 return
 
@@ -303,6 +323,9 @@ class MatchdexBot(commands.AutoShardedBot):
             return
 
         # Catch-all
+        if isinstance(error, (discord.NotFound, discord.InteractionResponded)):
+             return
+
         await reply("An unexpected error occurred. If this persists, contact support.")
         log.error("Unhandled interaction error", exc_info=error)
         await self._log_error_to_channel(interaction, error)

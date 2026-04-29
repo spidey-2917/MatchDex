@@ -432,7 +432,6 @@ class TradeCog(commands.Cog, name="Trading"):
 
         if not trade_id or not trade_data:
             # Also check the database for stuck PENDING trades
-            from core.models import Trade
             stuck_trades = Trade.objects.filter(
                 status="PENDING"
             ).filter(
