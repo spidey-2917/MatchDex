@@ -480,6 +480,53 @@ class AdminCog(commands.Cog, name="Admin"):
         )
 
     @md_group.command(
+        name="reload_all_cache", description="GLOBAL: Reload blacklist, config, and RESET all active bot states"
+    )
+    async def md_reload_all(self, interaction: discord.Interaction):
+        if not await self.check_admin(interaction):
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        # 1. Reload Blacklist
+        await self.bot.load_blacklist_cache()
+        
+        # 2. Reload Config
+        from core.settings import read_settings
+        read_settings()
+        
+        # 3. Clear Spawning Caches
+        spawner = self.bot.get_cog("Spawning")
+        if spawner:
+            spawner.message_counts.clear()
+            spawner.last_spawn_time.clear()
+            spawner.spawn_thresholds.clear()
+        
+        # 4. Clear Active Trades
+        from core.bot_logic.TradeCog import ACTIVE_TRADES
+        from core.models import Trade
+        
+        # Mark all pending trades as cancelled in DB
+        trade_count = len(ACTIVE_TRADES)
+        ACTIVE_TRADES.clear()
+        await Trade.objects.filter(status="PENDING").aupdate(status="CANCELLED")
+        
+        # 5. Clear Active Matches
+        from core.bot_logic.MatchCog import ACTIVE_MATCHES
+        match_count = len(ACTIVE_MATCHES)
+        ACTIVE_MATCHES.clear()
+        
+        await interaction.followup.send(
+            "✅ **Global Cache Reload Complete**\n"
+            "- Blacklist refreshed\n"
+            "- `config.yml` reloaded\n"
+            f"- Spawning timers reset globally\n"
+            f"- {trade_count} active trades cancelled\n"
+            f"- {match_count} active matches cancelled",
+            ephemeral=True
+        )
+
+    @md_group.command(
         name="reload_config", description="Reload settings from config.yml without restart"
     )
     async def md_reload_config(self, interaction: discord.Interaction):

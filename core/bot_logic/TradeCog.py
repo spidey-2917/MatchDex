@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from core.models import DiscordUser, Trade, TradeItem, UserCard
+from core.utils import CardListView
 
 ACTIVE_TRADES = {}
 
@@ -110,6 +111,89 @@ class TradeActionView(discord.ui.View):
         db_trade.status = "CANCELLED"
         await db_trade.asave()
         del ACTIVE_TRADES[self.trade_id]
+
+
+class TradeBulkAddSelect(discord.ui.Select):
+    def __init__(self, cards):
+        options = [
+            discord.SelectOption(
+                label=f"{c.template.display_name} ({c.template.ovr})",
+                description=f"ID: {c.card_id} | {c.template.rarity}",
+                value=c.card_id,
+            )
+            for c in cards
+        ]
+        super().__init__(
+            placeholder="Select cards to add to trade...",
+            options=options,
+            min_values=1,
+            max_values=len(options),
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        # The view handles the logic
+        await self.view.add_selected_cards(interaction, self.values)
+
+
+class TradeBulkAddView(CardListView):
+    def __init__(self, user_db, sort_by, bot, trade_id, cog, reverse=False):
+        super().__init__(user_db, sort_by, bot, reverse=reverse, ephemeral=True)
+        self.trade_id = trade_id
+        self.cog = cog
+
+    def add_selection_menu(self, cards):
+        if cards:
+            select = TradeBulkAddSelect(cards)
+            select.row = 2
+            self.add_item(select)
+
+    def add_utility_buttons(self, interaction):
+        add_all_btn = discord.ui.Button(label="Add All on Page", style=discord.ButtonStyle.success, row=1)
+        async def cb_add_all(it):
+            card_ids = [c.card_id for c in self.current_cards]
+            await self.add_selected_cards(it, card_ids)
+        add_all_btn.callback = cb_add_all
+        self.add_item(add_all_btn)
+
+        quit_btn = discord.ui.Button(label="Done", style=discord.ButtonStyle.primary, row=1)
+        async def cb_quit(it):
+            await it.response.edit_message(content="✅ Finished adding cards to trade.", view=None)
+            self.stop()
+        quit_btn.callback = cb_quit
+        self.add_item(quit_btn)
+
+    async def add_selected_cards(self, interaction, card_ids):
+        await interaction.response.defer(ephemeral=True)
+        t = ACTIVE_TRADES.get(self.trade_id)
+        if not t:
+            return await interaction.followup.send("Trade not found or expired.", ephemeral=True)
+
+        t["initiator_confirm"] = False
+        t["receiver_confirm"] = False
+
+        offer_list = t["initiator_offer"] if interaction.user.id == t["initiator"].id else t["receiver_offer"]
+        
+        added_count = 0
+        for cid in card_ids:
+            if any(c.card_id == cid for c in offer_list):
+                continue
+            
+            try:
+                card = await UserCard.objects.select_related("template").aget(
+                    card_id=cid, owner__discord_id=interaction.user.id
+                )
+                offer_list.append(card)
+                added_count += 1
+            except UserCard.DoesNotExist:
+                continue
+
+        if added_count > 0:
+            await self.cog.save_trade_state(self.trade_id)
+            view = TradeActionView(self.trade_id, self.cog)
+            await t["message"].edit(embed=self.cog.build_trade_embed(self.trade_id), view=view)
+            await interaction.followup.send(f"Added **{added_count}** card(s) to the trade.", ephemeral=True)
+        else:
+            await interaction.followup.send("No new cards were added (they might already be in the trade).", ephemeral=True)
 
 
 class TradeCog(commands.Cog, name="Trading"):
@@ -418,6 +502,36 @@ class TradeCog(commands.Cog, name="Trading"):
         await interaction.followup.send("Card removed from your offer.", ephemeral=True)
 
     @trade_group.command(
+        name="bulk_add", description="Add multiple cards to your trade via a list menu"
+    )
+    @app_commands.choices(
+        sort_by=[
+            app_commands.Choice(name="OVR (Highest)", value="ovr"),
+            app_commands.Choice(name="Rarity", value="rarity"),
+            app_commands.Choice(name="Card Type", value="type"),
+            app_commands.Choice(name="Catch Date (Newest)", value="date"),
+        ]
+    )
+    async def bulk_add(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False):
+        # Check if user is in a trade
+        trade_id = None
+        for tid, t in ACTIVE_TRADES.items():
+            if interaction.user.id in (t["initiator"].id, t["receiver"].id):
+                trade_id = tid
+                break
+        
+        if not trade_id:
+            return await interaction.response.send_message("You are not in an active trade.", ephemeral=True)
+
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id,
+            defaults={"username": interaction.user.name},
+        )
+
+        view = TradeBulkAddView(user, sort_by, self.bot, trade_id, self, reverse)
+        await view.update_view(interaction)
+
+    @trade_group.command(
         name="cancel", description="Cancel your current active trade"
     )
     async def trade_cancel(self, interaction: discord.Interaction):
@@ -432,6 +546,7 @@ class TradeCog(commands.Cog, name="Trading"):
 
         if not trade_id or not trade_data:
             # Also check the database for stuck PENDING trades
+            from core.models import Trade
             stuck_trades = Trade.objects.filter(
                 status="PENDING"
             ).filter(

@@ -127,7 +127,9 @@ class SpawningCog(commands.Cog, name="Spawning"):
             return
 
         # Servers need at least 50 members to trigger wild spawns
-        if message.guild.member_count < 50:
+        # member_count is generally available via gateway even without intents
+        m_count = message.guild.member_count or 0
+        if m_count < 50:
             return
 
         guild_id = message.guild.id

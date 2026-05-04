@@ -180,12 +180,20 @@ class GeneralCog(commands.Cog, name="General"):
 
         @sync_to_async
         def get_lb_users():
-            qs = DiscordUser.objects.order_by("-points")
-            if scope == "server" and interaction.guild:
-                # Filter to members in this guild
-                member_ids = [m.id for m in interaction.guild.members]
-                qs = qs.filter(discord_id__in=member_ids)
-            return list(qs[:10])
+            if scope == "global" or not interaction.guild:
+                return list(DiscordUser.objects.order_by("-points")[:10])
+            
+            # Without members intent, interaction.guild.members is unreliable.
+            # We fetch top 200 global players and filter for those in this guild.
+            # This covers the most active/top players in most servers.
+            all_top = list(DiscordUser.objects.order_by("-points")[:200])
+            guild_users = []
+            for u in all_top:
+                if interaction.guild.get_member(u.discord_id):
+                    guild_users.append(u)
+                if len(guild_users) >= 10:
+                    break
+            return guild_users
 
         users = await get_lb_users()
 

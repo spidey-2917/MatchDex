@@ -209,6 +209,7 @@ def from_base36(s: str) -> int:
     return int(s, 36)
 
 
+
 async def clear_card_from_lineups(user_card_id: int):
     """
     Find all Lineup records that reference this specific UserCard ID
@@ -250,3 +251,161 @@ async def clear_card_from_lineups(user_card_id: int):
             lineup.save()
 
     await clear()
+
+
+class SkipPageModal(discord.ui.Modal, title="Skip to Page"):
+    page_input = discord.ui.TextInput(
+        label="Enter Page Number",
+        placeholder="e.g. 5",
+        min_length=1,
+        max_length=5,
+    )
+
+    def __init__(self, view, interaction):
+        super().__init__()
+        self.view = view
+        self.original_interaction = interaction
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            target_page = int(self.page_input.value)
+            total_pages = (self.view.total_cards + self.view.page_size - 1) // self.view.page_size
+            
+            if 1 <= target_page <= total_pages:
+                self.view.page = target_page - 1
+                await interaction.response.defer()
+                await self.view.update_view(self.original_interaction)
+            else:
+                await interaction.response.send_message(f"Invalid page! Please enter a number between 1 and {total_pages}.", ephemeral=True)
+        except ValueError:
+            await interaction.response.send_message("Please enter a valid numerical page number.", ephemeral=True)
+
+
+class CardListView(discord.ui.View):
+    """
+    Reusable base view for listing cards with pagination.
+    Subclasses should override add_selection_menu to customize behavior.
+    """
+    def __init__(self, user_db, sort_by, bot, reverse=False, ephemeral=False):
+        super().__init__(timeout=180)
+        self.user_db = user_db
+        self.sort_by = sort_by
+        self.bot = bot
+        self.reverse = reverse
+        self.ephemeral = ephemeral
+        self.page = 0
+        self.page_size = 25
+        self.total_cards = 0
+        self.current_cards = []
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_db.discord_id:
+            await interaction.response.send_message(
+                "Only the user who opened this list can control it.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def get_page_cards(self):
+        from .models import UserCard
+        @sync_to_async
+        def fetch():
+            qs = UserCard.objects.filter(owner=self.user_db).select_related("template")
+            
+            if self.sort_by == "ovr":
+                order = ["-template__ovr", "-caught_at"]
+                if self.reverse: order = ["template__ovr", "caught_at"]
+                qs = qs.order_by(*order)
+            elif self.sort_by == "rarity":
+                order = ["-template__rarity", "-template__ovr"]
+                if self.reverse: order = ["template__rarity", "template__ovr"]
+                qs = qs.order_by(*order)
+            elif self.sort_by == "type":
+                order = ["-template__card_type", "-template__ovr"]
+                if self.reverse: order = ["template__card_type", "template__ovr"]
+                qs = qs.order_by(*order)
+            elif self.sort_by == "date":
+                order = ["-caught_at"]
+                if self.reverse: order = ["caught_at"]
+                qs = qs.order_by(*order)
+            
+            self.total_cards = qs.count()
+            start = self.page * self.page_size
+            end = start + self.page_size
+            return list(qs[start:end])
+
+        return await fetch()
+
+    def add_selection_menu(self, cards):
+        # To be overridden by subclasses
+        pass
+
+    def add_utility_buttons(self, interaction):
+        # To be overridden by subclasses
+        quit_btn = discord.ui.Button(label="Quit", style=discord.ButtonStyle.danger, row=1)
+        async def cb_quit(it):
+            await it.response.edit_message(content="🛑 List closed.", view=None)
+            self.stop()
+        quit_btn.callback = cb_quit
+        self.add_item(quit_btn)
+
+    async def update_view(self, interaction: discord.Interaction):
+        self.current_cards = await self.get_page_cards()
+        total_pages = (self.total_cards + self.page_size - 1) // self.page_size
+        
+        if not self.current_cards and self.page == 0:
+            msg = "You have no cards!"
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=self.ephemeral)
+            else:
+                await interaction.response.send_message(msg, ephemeral=self.ephemeral)
+            return
+
+        self.clear_items()
+
+        # Row 0: Pagination Controls
+        first_btn = discord.ui.Button(label="<<", style=discord.ButtonStyle.secondary, disabled=(self.page == 0), row=0)
+        prev_btn = discord.ui.Button(label="...", style=discord.ButtonStyle.primary, disabled=(self.page == 0), row=0)
+        curr_page_btn = discord.ui.Button(label=str(self.page + 1), style=discord.ButtonStyle.primary, row=0)
+        next_page_val = self.page + 2 if self.page + 1 < total_pages else "-"
+        next_page_btn = discord.ui.Button(label=str(next_page_val), style=discord.ButtonStyle.secondary, disabled=(next_page_val == "-"), row=0)
+        last_btn = discord.ui.Button(label=">>", style=discord.ButtonStyle.secondary, disabled=(self.page + 1 >= total_pages), row=0)
+
+        async def cb_first(it):
+            self.page = 0
+            await it.response.defer()
+            await self.update_view(interaction)
+        async def cb_prev(it):
+            self.page = max(0, self.page - 1)
+            await it.response.defer()
+            await self.update_view(interaction)
+        async def cb_next(it):
+            self.page = min(total_pages - 1, self.page + 1)
+            await it.response.defer()
+            await self.update_view(interaction)
+        async def cb_last(it):
+            self.page = total_pages - 1
+            await it.response.defer()
+            await self.update_view(interaction)
+
+        first_btn.callback, prev_btn.callback, next_page_btn.callback, last_btn.callback = cb_first, cb_prev, cb_next, cb_last
+        for btn in [first_btn, prev_btn, curr_page_btn, next_page_btn, last_btn]: self.add_item(btn)
+
+        # Row 1: Utility
+        skip_btn = discord.ui.Button(label="Skip to page...", style=discord.ButtonStyle.secondary, row=1)
+        async def cb_skip(it): await it.response.send_modal(SkipPageModal(self, interaction))
+        skip_btn.callback = cb_skip
+        self.add_item(skip_btn)
+        
+        self.add_utility_buttons(interaction)
+
+        # Row 2+: Selection
+        self.add_selection_menu(self.current_cards)
+
+        content = f"**{self.user_db.username}'s Cards**\n" \
+                  f"Page {self.page + 1} of {max(1, total_pages)} ({self.total_cards} cards total)"
+
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=content, view=self)
+        else:
+            await interaction.response.send_message(content=content, view=self, ephemeral=self.ephemeral)
