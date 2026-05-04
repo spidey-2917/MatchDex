@@ -214,6 +214,17 @@ class GeneralCog(commands.Cog, name="General"):
 
         await interaction.followup.send(embed=embed)
 
+    @app_commands.command(name="about", description="About MatchDex Bot")
+    async def about(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="MatchDex Bot",
+            description="The ultimate soccer card collection and trading bot!",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="Invite Me", value="[Click here to invite the bot to your server!](https://discord.com/oauth2/authorize?client_id=1485170319617429584&permissions=2147863616&integration_type=0&scope=bot+applications.commands)", inline=False)
+        embed.set_footer(text="MatchDex Bot v1.0")
+        await interaction.response.send_message(embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(GeneralCog(bot))
