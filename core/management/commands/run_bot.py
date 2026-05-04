@@ -66,8 +66,9 @@ class MatchdexBot(commands.AutoShardedBot):
 
     def __init__(self):
         intents = discord.Intents.default()
-        intents.message_content = True
-        intents.members = True
+        # These are disabled to avoid the need for Discord Verification
+        intents.message_content = False
+        intents.members = False
 
         super().__init__(
             command_prefix="!",
