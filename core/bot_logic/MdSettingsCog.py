@@ -32,7 +32,7 @@ class ConfirmDeleteView(discord.ui.View):
                 "You don't have an account registered.", ephemeral=True
             )
 
-        from .models import UserCard, Lineup, FavouriteCard, PromoCodeRedemption
+        from core.models import UserCard, Lineup, FavouriteCard, PromoCodeRedemption
         # Delete related data but keep the DiscordUser to preserve cooldowns
         await UserCard.objects.filter(owner=user).adelete()
         await Lineup.objects.filter(owner=user).adelete()
