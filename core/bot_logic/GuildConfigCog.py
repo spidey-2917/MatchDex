@@ -29,14 +29,10 @@ class GuildConfigCog(commands.Cog, name="Server Config"):
         settings.spawn_channel_id = channel.id
         await settings.asave()
 
-        # Reset spawn counters so the natural cycle starts fresh — no free spawns
+        # Update spawning cache
         spawning_cog = self.bot.get_cog("Spawning")
         if spawning_cog:
-            import time as _time
-            guild_id = interaction.guild_id
-            spawning_cog.message_counts[guild_id] = 0
-            spawning_cog.last_spawn_time[guild_id] = _time.time()
-            spawning_cog._roll_threshold(guild_id)
+            spawning_cog.enabled_guilds.add(interaction.guild_id)
 
         await interaction.followup.send(
             f"✅ Spawn channel set to {channel.mention}. Cards will start appearing naturally as members chat!"

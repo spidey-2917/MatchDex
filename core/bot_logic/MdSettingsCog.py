@@ -32,8 +32,20 @@ class ConfirmDeleteView(discord.ui.View):
                 "You don't have an account registered.", ephemeral=True
             )
 
-        # Due to cascade deletion, deleting the DiscordUser will delete their UserCards
-        await user.adelete()
+        from .models import UserCard, Lineup, FavouriteCard, PromoCodeRedemption
+        # Delete related data but keep the DiscordUser to preserve cooldowns
+        await UserCard.objects.filter(owner=user).adelete()
+        await Lineup.objects.filter(owner=user).adelete()
+        await FavouriteCard.objects.filter(owner=user).adelete()
+        await PromoCodeRedemption.objects.filter(user=user).adelete()
+
+        # Reset profile stats
+        user.points = 0
+        user.wins = 0
+        user.losses = 0
+        user.draws = 0
+        user.cards_collected = 0
+        await user.asave()
 
         # Turn off buttons
         for child in self.children:

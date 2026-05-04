@@ -104,6 +104,13 @@ class SpawningCog(commands.Cog, name="Spawning"):
         self.message_counts: dict[int, int] = {}
         self.last_spawn_time: dict[int, float] = {}
         self.spawn_thresholds: dict[int, int] = {}
+        self.enabled_guilds: set[int] = set()
+
+    async def cog_load(self):
+        # Populate enabled_guilds cache on startup
+        from core.models import ServerSettings
+        async for setting in ServerSettings.objects.filter(spawn_channel_id__isnull=False):
+            self.enabled_guilds.add(setting.guild_id)
 
     def cog_unload(self):
         pass
@@ -126,13 +133,16 @@ class SpawningCog(commands.Cog, name="Spawning"):
         if message.author.bot or not message.guild:
             return
 
+        guild_id = message.guild.id
+        
+        # Abuse prevention: Only count messages if a spawn channel is set
+        if guild_id not in self.enabled_guilds:
+            return
+
         # Servers need at least 50 members to trigger wild spawns
-        # member_count is generally available via gateway even without intents
         m_count = message.guild.member_count or 0
         if m_count < 50:
             return
-
-        guild_id = message.guild.id
         self.message_counts[guild_id] = self.message_counts.get(guild_id, 0) + 1
         count = self.message_counts[guild_id]
         import time as _time
