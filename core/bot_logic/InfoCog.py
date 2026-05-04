@@ -55,20 +55,8 @@ class InfoCog(commands.Cog, name="Info"):
         else:
             uptime = "N/A"
 
-        # Build invite link with correct permissions
-        invite = discord.utils.oauth_url(
-            self.bot.application_id,
-            permissions=discord.Permissions(
-                send_messages=True,
-                read_messages=True,
-                embed_links=True,
-                attach_files=True,
-                add_reactions=True,
-                manage_messages=True,
-                use_external_emojis=True,
-            ),
-            scopes=("bot", "applications.commands"),
-        )
+        # Build invite link with your exact custom permissions
+        invite = f"https://discord.com/oauth2/authorize?client_id={self.bot.application_id}&permissions=2147863616&integration_type=0&scope=bot+applications.commands"
 
         embed = discord.Embed(
             title=f"⚽ {settings.bot_name}",
