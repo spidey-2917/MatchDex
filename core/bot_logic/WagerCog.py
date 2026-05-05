@@ -432,6 +432,28 @@ class WagerCog(commands.Cog, name="Wagers"):
         )
         await view.update_message()
 
+    @wager_group.command(name="cancel", description="Cancel your active wager")
+    async def cancel(self, interaction: discord.Interaction):
+        view = self.active_wagers.get(interaction.user.id)
+        if not view:
+            await interaction.response.send_message(
+                "You are not part of an active wager!", ephemeral=True
+            )
+            return
+
+        # Determine who cancelled it for the status message
+        view.status = (
+            f"🚫 Wager cancelled by {interaction.user.display_name} via command."
+        )
+        for child in view.children:
+            child.disabled = True
+
+        view.end_wager_state()
+        await interaction.response.send_message(
+            "✅ Your active wager has been cancelled.", ephemeral=True
+        )
+        await view.update_message()
+
 
 async def setup(bot):
     await bot.add_cog(WagerCog(bot))

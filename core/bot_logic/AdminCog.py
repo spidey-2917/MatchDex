@@ -516,13 +516,27 @@ class AdminCog(commands.Cog, name="Admin"):
         match_count = len(ACTIVE_MATCHES)
         ACTIVE_MATCHES.clear()
         
+        # 6. Clear Active Wagers
+        wager_cog = self.bot.get_cog("Wagers")
+        wager_count = 0
+        if wager_cog:
+            unique_wagers = list(set(wager_cog.active_wagers.values()))
+            wager_count = len(unique_wagers)
+            for view in unique_wagers:
+                view.status = "🚫 Wager cancelled due to global cache reload."
+                for child in view.children:
+                    child.disabled = True
+                view.stop()
+            wager_cog.active_wagers.clear()
+
         await interaction.followup.send(
             "✅ **Global Cache Reload Complete**\n"
             "- Blacklist refreshed\n"
             "- `config.yml` reloaded\n"
             f"- Spawning timers reset globally\n"
             f"- {trade_count} active trades cancelled\n"
-            f"- {match_count} active matches cancelled",
+            f"- {match_count} active matches cancelled\n"
+            f"- {wager_count} active wagers cancelled",
             ephemeral=True
         )
 
