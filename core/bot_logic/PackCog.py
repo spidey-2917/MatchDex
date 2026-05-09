@@ -44,35 +44,11 @@ class PackCog(commands.Cog, name="Packs"):
 
         await interaction.response.defer()
 
-        # Pick rarity and card
-        rarity = get_random_rarity()
+        await interaction.response.defer()
 
-        @sync_to_async
-        def get_card():
-            # First: try exact rarity + type match
-            qs = CardTemplate.objects.filter(rarity=rarity)
-            if card_filter_type:
-                if isinstance(card_filter_type, list):
-                    qs = qs.filter(card_type__in=card_filter_type)
-                else:
-                    qs = qs.filter(card_type=card_filter_type)
-
-            if qs.exists():
-                return qs.order_by("?").first()
-
-            # Fallback: any rarity but keep the correct card type
-            if card_filter_type:
-                if isinstance(card_filter_type, list):
-                    fallback = CardTemplate.objects.filter(card_type__in=card_filter_type)
-                else:
-                    fallback = CardTemplate.objects.filter(card_type=card_filter_type)
-                if fallback.exists():
-                    return fallback.order_by("?").first()
-
-            # Last resort: any card at all
-            return CardTemplate.objects.order_by("?").first()
-
-        card = await get_card()
+        # Pick random card based on configuration
+        from core.utils import pick_random_card
+        card = await sync_to_async(pick_random_card)("PACK", card_type_filter=card_filter_type)
 
         if not card:
             await interaction.followup.send(
@@ -214,45 +190,21 @@ class PackCog(commands.Cog, name="Packs"):
             # Parse the pack category from reward_type (e.g. PACK_DAILY → daily)
             pack_category = promo.reward_type[5:].lower()
 
-            rarity = get_random_rarity()
+            # Pick random card based on configuration
+            from core.utils import pick_random_card
+            
+            # Determine the card type filter based on pack category
+            type_filter = None
+            if pack_category == "daily":
+                type_filter = "BASE"
+            elif pack_category == "weekly":
+                type_filter = "ICON"
+            elif pack_category == "event":
+                type_filter = "EVENT"
+            elif pack_category == "premium":
+                type_filter = ["ICON", "EVENT"]
 
-            @sync_to_async
-            def get_pack_card():
-                # Determine the card type filter based on pack category
-                type_filter = None
-                if pack_category == "daily":
-                    type_filter = "BASE"
-                elif pack_category == "weekly":
-                    type_filter = "ICON"
-                elif pack_category == "event":
-                    type_filter = "EVENT"
-                elif pack_category == "premium":
-                    type_filter = ["ICON", "EVENT"]
-
-                # First: try exact rarity + type match
-                qs = CardTemplate.objects.filter(rarity=rarity)
-                if type_filter:
-                    if isinstance(type_filter, list):
-                        qs = qs.filter(card_type__in=type_filter)
-                    else:
-                        qs = qs.filter(card_type=type_filter)
-
-                if qs.exists():
-                    return qs.order_by("?").first()
-
-                # Fallback: any rarity but keep the correct card type
-                if type_filter:
-                    if isinstance(type_filter, list):
-                        fallback = CardTemplate.objects.filter(card_type__in=type_filter)
-                    else:
-                        fallback = CardTemplate.objects.filter(card_type=type_filter)
-                    if fallback.exists():
-                        return fallback.order_by("?").first()
-
-                # Last resort: any BASE card
-                return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
-
-            card = await get_pack_card()
+            card = await sync_to_async(pick_random_card)("PACK", card_type_filter=type_filter)
             if not card:
                 await interaction.followup.send("No cards available for this promo!", ephemeral=True)
                 return

@@ -99,25 +99,115 @@ def map_sofifa_pos(pos_str):
     return SOFIFA_POS_MAP.get(pos_str.upper(), "ST")
 
 
+def get_drop_config(category):
+    """
+    Fetch the current drop rate configuration from the database.
+    Falls back to config.yml settings if no database entries exist.
+    """
+    from .models import DropRate, RateConfig
+
+    config, _ = RateConfig.objects.get_or_create(
+        category=category, defaults={"mode": "RARITY"}
+    )
+    rates = DropRate.objects.filter(category=category, mode=config.mode)
+
+    if config.mode == "RARITY":
+        if not rates.exists():
+            # Fallback to config.yml
+            return "RARITY", settings.rarity_weights
+        weights = {r.rarity: r.weight for r in rates if r.rarity}
+        return "RARITY", weights
+    else:
+        # mode == 'OVR'
+        if not rates.exists():
+            # Fallback to RARITY from config.yml if no OVR rates defined
+            return "RARITY", settings.rarity_weights
+        ovr_ranges = [
+            (r.min_ovr, r.max_ovr, r.weight)
+            for r in rates
+            if r.min_ovr is not None and r.max_ovr is not None
+        ]
+        return "OVR", ovr_ranges
+
+
+def pick_random_card(category, card_type_filter=None):
+    """
+    Pick a random card based on the current drop rate configuration.
+    """
+    mode, weights = get_drop_config(category)
+
+    # 1. Choose card type (BASE, ICON, EVENT)
+    if card_type_filter:
+        if isinstance(card_type_filter, list):
+            # If multiple types allowed, we still use the default weighted distribution
+            # but filtered for the allowed types.
+            possible = ["BASE", "ICON", "EVENT"]
+            all_weights = [90, 7, 3]
+            
+            filtered_types = []
+            filtered_weights = []
+            for t, w in zip(possible, all_weights):
+                if t in card_type_filter:
+                    filtered_types.append(t)
+                    filtered_weights.append(w)
+            
+            if not filtered_types:
+                chosen_type = random.choice(card_type_filter)
+            else:
+                chosen_type = random.choices(filtered_types, weights=filtered_weights, k=1)[0]
+        else:
+            chosen_type = card_type_filter
+    else:
+        chosen_type = random.choices(["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1)[0]
+
+    # 2. Pick card based on mode
+    if mode == "RARITY":
+        rarity = random.choices(list(weights.keys()), weights=list(weights.values()), k=1)[
+            0
+        ]
+        qs = CardTemplate.objects.filter(card_type=chosen_type, rarity=rarity)
+        if not qs.exists():
+            # Fallback: keep type but ignore rarity
+            fallback = CardTemplate.objects.filter(card_type=chosen_type)
+            if fallback.exists():
+                return fallback.order_by("?").first()
+            # Last resort: any BASE card
+            return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
+        return qs.order_by("?").first()
+    else:
+        # mode == 'OVR'
+        chosen_range = random.choices(
+            weights, weights=[w[2] for w in weights], k=1
+        )[0]
+        min_ovr, max_ovr = chosen_range[0], chosen_range[1]
+        qs = CardTemplate.objects.filter(
+            card_type=chosen_type, ovr__gte=min_ovr, ovr__lte=max_ovr
+        )
+        if not qs.exists():
+            # Fallback: keep type but ignore OVR range
+            fallback = CardTemplate.objects.filter(card_type=chosen_type)
+            if fallback.exists():
+                return fallback.order_by("?").first()
+            # Last resort: any BASE card
+            return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
+        return qs.order_by("?").first()
+
+
 def get_random_rarity():
-    """Pick a rarity using the weights from config.yml."""
+    """Deprecated: Use pick_random_card instead. Kept for minimal compatibility."""
     rarities = list(settings.rarity_weights.keys())
     weights = list(settings.rarity_weights.values())
     return random.choices(rarities, weights=weights, k=1)[0]
 
 
 def get_random_card_by_rarity(rarity):
-    # Event cards now have a small chance to appear alongside BASE and ICON
-    chosen_type = random.choices(
-        ["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1
-    )[0]
+    """Deprecated: Use pick_random_card instead. Kept for minimal compatibility."""
+    chosen_type = random.choices(["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1)[0]
     cards = CardTemplate.objects.filter(card_type=chosen_type, rarity=rarity)
     if not cards.exists():
-        # Fallback: any card of this type regardless of rarity
         fallback = CardTemplate.objects.filter(card_type=chosen_type)
         if fallback.exists():
             return fallback.order_by("?").first()
-        # Last resort: any BASE card
         return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
     return cards.order_by("?").first()
 

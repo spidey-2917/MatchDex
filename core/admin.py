@@ -10,10 +10,41 @@ from .models import (
     Logo,
     PromoCode,
     PromoCodeRedemption,
+    RateConfig,
     ServerSettings,
     UserCard,
     UserLogo,
+    DropRate,
 )
+
+
+@admin.register(RateConfig)
+class RateConfigAdmin(admin.ModelAdmin):
+    list_display = ("category", "mode")
+
+
+@admin.register(DropRate)
+class DropRateAdmin(admin.ModelAdmin):
+    list_display = ("category", "mode", "get_value", "weight", "get_percentage")
+    list_filter = ("category", "mode")
+
+    def get_value(self, obj):
+        if obj.mode == "RARITY":
+            return obj.rarity
+        return f"OVR {obj.min_ovr}-{obj.max_ovr}"
+
+    get_value.short_description = "Value"
+
+    def get_percentage(self, obj):
+        from django.db.models import Sum
+        total = DropRate.objects.filter(
+            category=obj.category, mode=obj.mode
+        ).aggregate(Sum("weight"))["weight__sum"]
+        if total:
+            return f"{(obj.weight / total) * 100:.1f}%"
+        return "0%"
+
+    get_percentage.short_description = "Percentage"
 
 
 @admin.register(DiscordUser)

@@ -190,8 +190,8 @@ class SpawningCog(commands.Cog, name="Spawning"):
 
     async def _spawn_card(self, channel: discord.TextChannel):
         """Pick a random card and send it as a catchable spawn."""
-        rarity = self._weighted_rarity()
-        card = await sync_to_async(self._pick_card)(rarity)
+        from core.utils import pick_random_card
+        card = await sync_to_async(pick_random_card)("SPAWN")
         if not card:
             return
 
@@ -211,27 +211,6 @@ class SpawningCog(commands.Cog, name="Spawning"):
         view = CatchView(card)
         msg = await channel.send(file=file, embed=embed, view=view)
         view.message = msg
-
-    def _weighted_rarity(self) -> str:
-        rarities = list(settings.rarity_weights.keys())
-        weights = list(settings.rarity_weights.values())
-        return random.choices(rarities, weights=weights, k=1)[0]
-
-    @staticmethod
-    def _pick_card(rarity: str):
-        # Event cards now have a small chance to appear in wild spawns
-        chosen_type = random.choices(
-            ["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1
-        )[0]
-        cards = CardTemplate.objects.filter(card_type=chosen_type, rarity=rarity)
-        if not cards.exists():
-            # Fallback: any card of this type regardless of rarity
-            fallback = CardTemplate.objects.filter(card_type=chosen_type)
-            if fallback.exists():
-                return fallback.order_by("?").first()
-            # Last resort: any BASE card
-            return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
-        return cards.order_by("?").first()
 
 
 async def setup(bot):

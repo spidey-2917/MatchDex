@@ -392,3 +392,40 @@ class TradeItem(models.Model):
 
     def __str__(self):
         return f"{self.card.template.name} sent by {self.sender.username}"
+
+
+class RateConfig(models.Model):
+    CATEGORIES = [("SPAWN", "Spawning"), ("PACK", "Packs")]
+    MODES = [("RARITY", "By Rarity"), ("OVR", "By OVR")]
+
+    category = models.CharField(max_length=10, choices=CATEGORIES, unique=True)
+    mode = models.CharField(max_length=10, choices=MODES, default="RARITY")
+
+    def __str__(self):
+        return f"{dict(self.CATEGORIES).get(self.category)} - {dict(self.MODES).get(self.mode)}"
+
+
+class DropRate(models.Model):
+    category = models.CharField(max_length=10, choices=RateConfig.CATEGORIES)
+    mode = models.CharField(max_length=10, choices=RateConfig.MODES)
+
+    # For Rarity mode
+    rarity = models.CharField(
+        max_length=20, choices=CardTemplate.RARITIES, blank=True, null=True
+    )
+
+    # For OVR mode
+    min_ovr = models.IntegerField(blank=True, null=True)
+    max_ovr = models.IntegerField(blank=True, null=True)
+
+    weight = models.FloatField(default=1.0)
+
+    class Meta:
+        verbose_name = "Drop Rate"
+        verbose_name_plural = "Drop Rates"
+
+    def __str__(self):
+        if self.mode == "RARITY":
+            return f"[{self.category}] {self.rarity}: {self.weight}"
+        else:
+            return f"[{self.category}] OVR {self.min_ovr}-{self.max_ovr}: {self.weight}"
