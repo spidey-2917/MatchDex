@@ -12,39 +12,84 @@ from .models import (
     PromoCodeRedemption,
     RateConfig,
     ServerSettings,
+    SpawnRate,
     UserCard,
     UserLogo,
-    DropRate,
 )
+
+
+# ── Rate Configuration with Inline Rates ────────────────────
+
+
+class SpawnRateInline(admin.TabularInline):
+    model = SpawnRate
+    extra = 0
+    fields = ("rarity", "min_ovr", "max_ovr", "weight", "get_percentage")
+    readonly_fields = ("get_percentage",)
+
+    def get_percentage(self, obj):
+        if obj.pk is None:
+            return "—"
+        return obj.percentage
+
+    get_percentage.short_description = "Effective %"
 
 
 @admin.register(RateConfig)
 class RateConfigAdmin(admin.ModelAdmin):
-    list_display = ("category", "mode")
+    list_display = ("category", "mode", "rates_summary")
+    inlines = [SpawnRateInline]
+
+    def rates_summary(self, obj):
+        return obj.get_rates_summary()
+
+    rates_summary.short_description = "Current Rates"
+
+    def save_model(self, request, obj, form, change):
+        """Auto-populate default rates when creating a new config or switching modes."""
+        super().save_model(request, obj, form, change)
+
+        # Check if mode changed or if there are no rates yet
+        existing_rates = obj.rates.count()
+        mode_changed = change and "mode" in form.changed_data
+
+        if mode_changed:
+            # Wipe old rates when switching modes
+            obj.rates.all().delete()
+            existing_rates = 0
+
+        if existing_rates == 0:
+            self._populate_defaults(obj)
+
+    def _populate_defaults(self, config):
+        """Create default rate entries based on the mode."""
+        from core.settings import settings as bot_settings
+
+        if config.mode == "RARITY":
+            for rarity, weight in bot_settings.rarity_weights.items():
+                SpawnRate.objects.create(
+                    config=config, rarity=rarity, weight=weight
+                )
+        else:
+            # OVR mode defaults
+            ovr_defaults = [
+                (60, 69, 5.0),
+                (70, 79, 25.0),
+                (80, 84, 30.0),
+                (85, 89, 25.0),
+                (90, 94, 12.0),
+                (95, 99, 3.0),
+            ]
+            for min_ovr, max_ovr, weight in ovr_defaults:
+                SpawnRate.objects.create(
+                    config=config,
+                    min_ovr=min_ovr,
+                    max_ovr=max_ovr,
+                    weight=weight,
+                )
 
 
-@admin.register(DropRate)
-class DropRateAdmin(admin.ModelAdmin):
-    list_display = ("category", "mode", "get_value", "weight", "get_percentage")
-    list_filter = ("category", "mode")
-
-    def get_value(self, obj):
-        if obj.mode == "RARITY":
-            return obj.rarity
-        return f"OVR {obj.min_ovr}-{obj.max_ovr}"
-
-    get_value.short_description = "Value"
-
-    def get_percentage(self, obj):
-        from django.db.models import Sum
-        total = DropRate.objects.filter(
-            category=obj.category, mode=obj.mode
-        ).aggregate(Sum("weight"))["weight__sum"]
-        if total:
-            return f"{(obj.weight / total) * 100:.1f}%"
-        return "0%"
-
-    get_percentage.short_description = "Percentage"
+# ── Standard Model Admins ───────────────────────────────────
 
 
 @admin.register(DiscordUser)

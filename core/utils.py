@@ -104,29 +104,31 @@ def get_drop_config(category):
     Fetch the current drop rate configuration from the database.
     Falls back to config.yml settings if no database entries exist.
     """
-    from .models import DropRate, RateConfig
+    from .models import RateConfig
 
-    config, _ = RateConfig.objects.get_or_create(
-        category=category, defaults={"mode": "RARITY"}
-    )
-    rates = DropRate.objects.filter(category=category, mode=config.mode)
+    config = RateConfig.objects.filter(category=category).first()
+    if not config:
+        # No config in DB at all — fall back to config.yml rarity weights
+        return "RARITY", settings.rarity_weights
+
+    rates = config.rates.all()
 
     if config.mode == "RARITY":
         if not rates.exists():
-            # Fallback to config.yml
             return "RARITY", settings.rarity_weights
         weights = {r.rarity: r.weight for r in rates if r.rarity}
         return "RARITY", weights
     else:
         # mode == 'OVR'
         if not rates.exists():
-            # Fallback to RARITY from config.yml if no OVR rates defined
             return "RARITY", settings.rarity_weights
         ovr_ranges = [
             (r.min_ovr, r.max_ovr, r.weight)
             for r in rates
             if r.min_ovr is not None and r.max_ovr is not None
         ]
+        if not ovr_ranges:
+            return "RARITY", settings.rarity_weights
         return "OVR", ovr_ranges
 
 

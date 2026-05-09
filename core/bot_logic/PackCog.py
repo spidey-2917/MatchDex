@@ -44,8 +44,6 @@ class PackCog(commands.Cog, name="Packs"):
 
         await interaction.response.defer()
 
-        await interaction.response.defer()
-
         # Pick random card based on configuration
         from core.utils import pick_random_card
         card = await sync_to_async(pick_random_card)("PACK", card_type_filter=card_filter_type)

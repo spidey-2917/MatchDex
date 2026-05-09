@@ -396,36 +396,72 @@ class TradeItem(models.Model):
 
 class RateConfig(models.Model):
     CATEGORIES = [("SPAWN", "Spawning"), ("PACK", "Packs")]
-    MODES = [("RARITY", "By Rarity"), ("OVR", "By OVR")]
+    MODES = [("RARITY", "By Rarity"), ("OVR", "By OVR Range")]
 
     category = models.CharField(max_length=10, choices=CATEGORIES, unique=True)
     mode = models.CharField(max_length=10, choices=MODES, default="RARITY")
 
+    class Meta:
+        verbose_name = "Rate Configuration"
+        verbose_name_plural = "Rate Configurations"
+
     def __str__(self):
-        return f"{dict(self.CATEGORIES).get(self.category)} - {dict(self.MODES).get(self.mode)}"
+        return f"{self.get_category_display()} — {self.get_mode_display()}"
+
+    def get_rates_summary(self):
+        """Build a human-readable summary of active rates with percentages."""
+        rates = self.rates.all()
+        if not rates.exists():
+            return "No rates configured (using config.yml defaults)"
+        total = sum(r.weight for r in rates)
+        if total == 0:
+            return "All weights are 0"
+        parts = []
+        for r in rates:
+            pct = (r.weight / total) * 100
+            if self.mode == "RARITY":
+                parts.append(f"{r.rarity}: {pct:.1f}%")
+            else:
+                parts.append(f"OVR {r.min_ovr}–{r.max_ovr}: {pct:.1f}%")
+        return " | ".join(parts)
 
 
-class DropRate(models.Model):
-    category = models.CharField(max_length=10, choices=RateConfig.CATEGORIES)
-    mode = models.CharField(max_length=10, choices=RateConfig.MODES)
+class SpawnRate(models.Model):
+    config = models.ForeignKey(
+        RateConfig, on_delete=models.CASCADE, related_name="rates"
+    )
 
     # For Rarity mode
     rarity = models.CharField(
-        max_length=20, choices=CardTemplate.RARITIES, blank=True, null=True
+        max_length=20, choices=CardTemplate.RARITIES, blank=True, null=True,
+        help_text="Used when mode is 'By Rarity'"
     )
 
     # For OVR mode
-    min_ovr = models.IntegerField(blank=True, null=True)
-    max_ovr = models.IntegerField(blank=True, null=True)
+    min_ovr = models.IntegerField(
+        blank=True, null=True, help_text="Min OVR (inclusive). Used when mode is 'By OVR Range'"
+    )
+    max_ovr = models.IntegerField(
+        blank=True, null=True, help_text="Max OVR (inclusive). Used when mode is 'By OVR Range'"
+    )
 
-    weight = models.FloatField(default=1.0)
+    weight = models.FloatField(
+        default=1.0, help_text="Relative weight. Higher = more likely to drop."
+    )
 
     class Meta:
         verbose_name = "Drop Rate"
         verbose_name_plural = "Drop Rates"
+        ordering = ["-weight"]
 
     def __str__(self):
-        if self.mode == "RARITY":
-            return f"[{self.category}] {self.rarity}: {self.weight}"
-        else:
-            return f"[{self.category}] OVR {self.min_ovr}-{self.max_ovr}: {self.weight}"
+        if self.config.mode == "RARITY":
+            return f"{self.rarity}: {self.weight}"
+        return f"OVR {self.min_ovr}–{self.max_ovr}: {self.weight}"
+
+    @property
+    def percentage(self):
+        total = sum(r.weight for r in self.config.rates.all())
+        if total == 0:
+            return "0%"
+        return f"{(self.weight / total) * 100:.1f}%"
