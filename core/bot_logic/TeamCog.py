@@ -323,12 +323,12 @@ class TeamCog(commands.Cog, name="Teams"):
             if not user_card:
                 return "no_card"
 
-            # Check if this player (template) is already in another slot
+            # Check if this player (template name) is already in another slot
             for s in valid_slots:
                 if s == slot:
                     continue
                 existing = getattr(lineup, s, None)
-                if existing and existing.template_id == user_card.template_id:
+                if existing and existing.template.name.lower() == user_card.template.name.lower():
                     return f"duplicate_player:{user_card.template.name}"
 
             # Position group validation
@@ -395,44 +395,43 @@ class TeamCog(commands.Cog, name="Teams"):
 
             valid_slots = get_formation_slots(lineup.formation)
             placements = []
-            used_card_ids = set()
-            used_template_ids = set()
-
-            # Collect already placed cards to avoid duplicates
+            # Clear existing slots
             for s in valid_slots:
-                existing = getattr(lineup, s, None)
-                if existing:
-                    used_card_ids.add(existing.id)
-                    used_template_ids.add(existing.template_id)
+                setattr(lineup, s, None)
+
+            placements = []
+            used_card_ids = set()
+            used_names = set()
 
             for slot_name in valid_slots:
-                if getattr(lineup, slot_name, None):
-                    continue  # Already filled
-
                 prefix = slot_name[:2]
                 expected_group = SLOT_TO_GROUP.get(prefix, "MID")
 
-                # Find the best available card for this group
-                # GK → position GK, DEF → LB/CB/RB, MID → CAM/CM/CDM, ATT → LW/ST/RW
                 group_positions = [
                     k for k, v in POS_GROUPS.items() if v == expected_group
                 ]
 
-                best_card = (
+                # Fetch available cards for this group
+                available_cards = (
                     UserCard.objects.filter(
                         owner=user, template__position__in=group_positions
                     )
                     .exclude(id__in=used_card_ids)
-                    .exclude(template_id__in=used_template_ids)
                     .select_related("template")
                     .order_by("-template__ovr")
-                    .first()
                 )
+
+                best_card = None
+                async for c in available_cards:
+                    # Skip if a player with this name is already in the lineup
+                    if c.template.name.lower() not in used_names:
+                        best_card = c
+                        break
 
                 if best_card:
                     setattr(lineup, slot_name, best_card)
                     used_card_ids.add(best_card.id)
-                    used_template_ids.add(best_card.template_id)
+                    used_names.add(best_card.template.name.lower())
                     placements.append(
                         f"• **{best_card.template.name}** ({best_card.template.position}) → {slot_name.upper()}"
                     )
@@ -564,7 +563,7 @@ class TeamCog(commands.Cog, name="Teams"):
                 if s == slot:
                     continue
                 existing = getattr(lineup, s, None)
-                if existing and existing.template_id == user_card.template_id:
+                if existing and existing.template.name.lower() == user_card.template.name.lower():
                     return f"duplicate:{user_card.template.name}"
 
             setattr(lineup, slot, user_card)
