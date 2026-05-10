@@ -8,6 +8,7 @@ from .models import (
     FavouriteCard,
     Lineup,
     Logo,
+    PremiumRole,
     PromoCode,
     PromoCodeRedemption,
     RateConfig,
@@ -177,3 +178,9 @@ class CommandLogAdmin(admin.ModelAdmin):
     list_display = ("user_id", "command_name", "guild_id", "timestamp")
     list_filter = ("command_name", "timestamp")
     search_fields = ("user_id", "guild_id")
+
+
+@admin.register(PremiumRole)
+class PremiumRoleAdmin(admin.ModelAdmin):
+    list_display = ("role_id", "label", "added_at")
+    search_fields = ("role_id", "label")

@@ -467,6 +467,118 @@ class AdminCog(commands.Cog, name="Admin"):
             )
 
     @md_group.command(
+        name="grant", description="Grant or revoke premium/VIP access for a user"
+    )
+    @app_commands.choices(
+        access_type=[
+            app_commands.Choice(name="Premium", value="premium"),
+            app_commands.Choice(name="VIP (Booster)", value="vip"),
+        ],
+        enabled=[
+            app_commands.Choice(name="True", value="true"),
+            app_commands.Choice(name="False", value="false"),
+        ],
+    )
+    async def md_grant(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        access_type: str,
+        enabled: str,
+    ):
+        if not await self.check_admin(interaction):
+            return
+
+        db_user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=user.id, defaults={"username": user.name}
+        )
+
+        grant = enabled == "true"
+
+        if access_type == "premium":
+            db_user.is_premium = grant
+            await db_user.asave()
+            status = "✅ Granted" if grant else "❌ Revoked"
+            await interaction.response.send_message(
+                f"{status} **Premium** access for {user.mention}.", ephemeral=True
+            )
+        elif access_type == "vip":
+            db_user.is_booster = grant
+            await db_user.asave()
+            status = "✅ Granted" if grant else "❌ Revoked"
+            await interaction.response.send_message(
+                f"{status} **VIP (Booster)** access for {user.mention}.", ephemeral=True
+            )
+
+    @md_group.command(
+        name="premium_role", description="Add or remove a Discord role that grants premium access"
+    )
+    @app_commands.choices(
+        action=[
+            app_commands.Choice(name="Add", value="add"),
+            app_commands.Choice(name="Remove", value="remove"),
+            app_commands.Choice(name="List", value="list"),
+        ]
+    )
+    @app_commands.describe(
+        role="The Discord role to add/remove",
+        action="Add, remove, or list premium roles",
+    )
+    async def md_premium_role(
+        self,
+        interaction: discord.Interaction,
+        action: str,
+        role: discord.Role | None = None,
+    ):
+        if not await self.check_admin(interaction):
+            return
+
+        from core.models import PremiumRole
+
+        if action == "list":
+            roles = []
+            async for pr in PremiumRole.objects.all():
+                roles.append(f"• <@&{pr.role_id}> (`{pr.role_id}`) — {pr.label or 'No label'}")
+            if roles:
+                await interaction.response.send_message(
+                    "**Premium Roles:**\n" + "\n".join(roles), ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "No premium roles configured.", ephemeral=True
+                )
+            return
+
+        if not role:
+            await interaction.response.send_message(
+                "You must specify a role for add/remove.", ephemeral=True
+            )
+            return
+
+        if action == "add":
+            _, created = await PremiumRole.objects.aget_or_create(
+                role_id=role.id, defaults={"label": role.name}
+            )
+            if created:
+                await interaction.response.send_message(
+                    f"✅ Added {role.mention} as a premium role.", ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"{role.mention} is already a premium role.", ephemeral=True
+                )
+        elif action == "remove":
+            deleted, _ = await PremiumRole.objects.filter(role_id=role.id).adelete()
+            if deleted:
+                await interaction.response.send_message(
+                    f"❌ Removed {role.mention} from premium roles.", ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"{role.mention} was not a premium role.", ephemeral=True
+                )
+
+    @md_group.command(
         name="reload_blacklist", description="Reload the in-memory blacklist cache"
     )
     async def md_reload_bl(self, interaction: discord.Interaction):

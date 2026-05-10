@@ -103,7 +103,19 @@ class PackCog(commands.Cog, name="Packs"):
         user, _ = await DiscordUser.objects.aget_or_create(
             discord_id=interaction.user.id, defaults={"username": interaction.user.name}
         )
-        if not user.is_premium:
+
+        # Check if user has premium via DB flag or a premium Discord role
+        has_premium_role = False
+        if not user.is_premium and isinstance(interaction.user, discord.Member):
+            from core.models import PremiumRole
+            premium_role_ids = set()
+            async for pr in PremiumRole.objects.all():
+                premium_role_ids.add(pr.role_id)
+            has_premium_role = any(
+                role.id in premium_role_ids for role in interaction.user.roles
+            )
+
+        if not user.is_premium and not has_premium_role:
             await interaction.response.send_message(
                 "This pack is only for Premium members!", ephemeral=True
             )

@@ -32,6 +32,19 @@ class DiscordUser(models.Model):
         return f"{self.username} ({self.discord_id})"
 
 
+class PremiumRole(models.Model):
+    """Discord role IDs that automatically grant premium access to /pack_premium."""
+    role_id = models.BigIntegerField(unique=True)
+    label = models.CharField(
+        max_length=100, blank=True,
+        help_text="Optional label (e.g. 'Server Booster', 'Patreon T1')"
+    )
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.label or 'Role'} ({self.role_id})"
+
+
 class CardTemplate(models.Model):
     CARD_TYPES = [
         ("BASE", "Base Card"),
