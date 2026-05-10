@@ -422,7 +422,7 @@ class TeamCog(commands.Cog, name="Teams"):
                 )
 
                 best_card = None
-                async for c in available_cards:
+                for c in available_cards:
                     # Skip if a player with this name is already in the lineup
                     if c.template.name.lower() not in used_names:
                         best_card = c
