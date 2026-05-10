@@ -408,10 +408,10 @@ class TradeItem(models.Model):
 
 
 class RateConfig(models.Model):
-    CATEGORIES = [("SPAWN", "Spawning"), ("PACK", "Packs")]
+    CATEGORIES = [("SPAWN", "Spawning"), ("PACK", "Packs"), ("PACK_PREMIUM", "Premium Pack")]
     MODES = [("RARITY", "By Rarity"), ("OVR", "By OVR Range")]
 
-    category = models.CharField(max_length=10, choices=CATEGORIES, unique=True)
+    category = models.CharField(max_length=20, choices=CATEGORIES, unique=True)
     mode = models.CharField(max_length=10, choices=MODES, default="RARITY")
 
     class Meta:

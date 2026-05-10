@@ -46,7 +46,8 @@ class PackCog(commands.Cog, name="Packs"):
 
         # Pick random card based on configuration
         from core.utils import pick_random_card
-        card = await sync_to_async(pick_random_card)("PACK", card_type_filter=card_filter_type)
+        category = "PACK_PREMIUM" if pack_type == "premium" else "PACK"
+        card = await sync_to_async(pick_random_card)(category, card_type_filter=card_filter_type)
 
         if not card:
             await interaction.followup.send(

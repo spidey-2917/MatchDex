@@ -467,12 +467,11 @@ class AdminCog(commands.Cog, name="Admin"):
             )
 
     @md_group.command(
-        name="grant", description="Grant or revoke premium/VIP access for a user"
+        name="grant", description="Grant or revoke premium access for a user"
     )
     @app_commands.choices(
         access_type=[
             app_commands.Choice(name="Premium", value="premium"),
-            app_commands.Choice(name="VIP (Booster)", value="vip"),
         ],
         enabled=[
             app_commands.Choice(name="True", value="true"),
@@ -501,13 +500,6 @@ class AdminCog(commands.Cog, name="Admin"):
             status = "✅ Granted" if grant else "❌ Revoked"
             await interaction.response.send_message(
                 f"{status} **Premium** access for {user.mention}.", ephemeral=True
-            )
-        elif access_type == "vip":
-            db_user.is_booster = grant
-            await db_user.asave()
-            status = "✅ Granted" if grant else "❌ Revoked"
-            await interaction.response.send_message(
-                f"{status} **VIP (Booster)** access for {user.mention}.", ephemeral=True
             )
 
     @md_group.command(

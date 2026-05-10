@@ -173,27 +173,22 @@ class MdSettingsCog(commands.Cog, name="Settings"):
         image_buffer = await asyncio.to_thread(generate_card_image, template)
         file = discord.File(fp=image_buffer, filename=f"{template.name}.png")
 
-        title = f"Player Info: {template.display_name}"
         if user_card:
-            title = f"Card #{user_card.card_id}: {template.display_name}"
+            caught_str = f"Caught on {discord.utils.format_dt(user_card.caught_at, 'f')} ({discord.utils.format_dt(user_card.caught_at, 'R')})."
+            content = (
+                f"ID: #{user_card.card_id}\n"
+                f"{caught_str}\n\n"
+                f"ATK: {template.attack_stat}\n"
+                f"DEF: {template.defence_stat}"
+            )
+        else:
+            content = (
+                f"Player: {template.display_name}\n\n"
+                f"ATK: {template.attack_stat}\n"
+                f"DEF: {template.defence_stat}"
+            )
 
-        embed = discord.Embed(title=title, color=discord.Color.blue())
-        if user_card:
-            embed.add_field(name="Owner", value=user_card.owner.username, inline=True)
-            embed.add_field(name="Card ID", value=user_card.card_id, inline=True)
-
-        embed.add_field(name="Position", value=template.position, inline=True)
-        embed.add_field(name="OVR", value=str(template.ovr), inline=True)
-        embed.add_field(name="Rarity", value=template.rarity, inline=True)
-        embed.add_field(name="Attack", value=str(template.attack_stat), inline=True)
-        embed.add_field(name="Defence", value=str(template.defence_stat), inline=True)
-        embed.add_field(name="Club", value=template.club, inline=True)
-        embed.add_field(
-            name="Card Type", value=template.get_card_type_display(), inline=True
-        )
-        embed.set_image(url=f"attachment://{template.name}.png")
-
-        await interaction.followup.send(file=file, embed=embed)
+        await interaction.followup.send(content=content, file=file)
 
     @md_group.command(
         name="list", description="Show a list of your cards with sorting and selection"
@@ -248,20 +243,15 @@ class SettingsCardSelect(discord.ui.Select):
         image_buffer = await asyncio.to_thread(generate_card_image, card.template)
         file = discord.File(fp=image_buffer, filename=f"{card.template.name}.png")
 
-        embed = discord.Embed(
-            title=f"Card #{card.card_id}: {card.template.display_name}",
-            color=discord.Color.blue(),
+        caught_str = f"Caught on {discord.utils.format_dt(card.caught_at, 'f')} ({discord.utils.format_dt(card.caught_at, 'R')})."
+        content = (
+            f"ID: #{card.card_id}\n"
+            f"{caught_str}\n\n"
+            f"ATK: {card.template.attack_stat}\n"
+            f"DEF: {card.template.defence_stat}"
         )
-        embed.add_field(name="Owner", value=card.owner.username, inline=True)
-        embed.add_field(name="Position", value=card.template.position, inline=True)
-        embed.add_field(name="OVR", value=str(card.template.ovr), inline=True)
-        embed.add_field(name="Rarity", value=card.template.rarity, inline=True)
-        embed.add_field(
-            name="Card Type", value=card.template.get_card_type_display(), inline=True
-        )
-        embed.set_image(url=f"attachment://{card.template.name}.png")
 
-        await interaction.followup.send(file=file, embed=embed)
+        await interaction.followup.send(content=content, file=file)
 
 
 class SettingsCardListView(CardListView):

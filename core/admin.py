@@ -73,14 +73,22 @@ class RateConfigAdmin(admin.ModelAdmin):
                 )
         else:
             # OVR mode defaults
-            ovr_defaults = [
-                (60, 69, 5.0),
-                (70, 79, 25.0),
-                (80, 84, 30.0),
-                (85, 89, 25.0),
-                (90, 94, 12.0),
-                (95, 99, 3.0),
-            ]
+            if config.category == "PACK_PREMIUM":
+                ovr_defaults = [
+                    (80, 84, 30.0),
+                    (85, 87, 50.0),
+                    (88, 90, 15.0),
+                    (91, 99, 5.0),
+                ]
+            else:
+                ovr_defaults = [
+                    (60, 69, 5.0),
+                    (70, 79, 25.0),
+                    (80, 84, 30.0),
+                    (85, 89, 25.0),
+                    (90, 94, 12.0),
+                    (95, 99, 3.0),
+                ]
             for min_ovr, max_ovr, weight in ovr_defaults:
                 SpawnRate.objects.create(
                     config=config,
