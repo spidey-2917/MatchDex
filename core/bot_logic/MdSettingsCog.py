@@ -7,7 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from core.models import DiscordUser, Lineup, Trade, TradeItem, UserCard, CardTemplate
-from core.utils import player_autocomplete, CardListView, SkipPageModal
+from core.utils import player_autocomplete, CardListView, SkipPageModal, clear_card_from_lineups
 
 
 class ConfirmDeleteView(discord.ui.View):
@@ -55,6 +55,51 @@ class ConfirmDeleteView(discord.ui.View):
             content="✅ **Account Deleted.** All your cards, lineups, stats, and profile data have been permanently erased from the Matchdex database.",
             view=self,
         )
+        self.stop()
+
+class ConfirmGiftView(discord.ui.View):
+    def __init__(self, sender_id, recipient, card):
+        super().__init__(timeout=60)
+        self.sender_id = sender_id
+        self.recipient = recipient
+        self.card = card
+
+    @discord.ui.button(label="Confirm Gift", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.sender_id:
+            return await interaction.response.send_message("Only the sender can confirm this.", ephemeral=True)
+
+        # Double check ownership right before transfer
+        self.card = await UserCard.objects.select_related("template").aget(id=self.card.id)
+        if self.card.owner_id != self.sender_id:
+            return await interaction.response.send_message("You no longer own this card!", ephemeral=True)
+
+        # Transfer
+        target_user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=self.recipient.id, defaults={"username": self.recipient.name}
+        )
+        
+        self.card.owner = target_user
+        await self.card.asave()
+
+        # Clear from sender's lineups
+        await clear_card_from_lineups(self.card.id)
+
+        for child in self.children:
+            child.disabled = True
+        
+        await interaction.response.edit_message(
+            content=f"🎁 **Gift Sent!** You gave **{self.card.template.display_name}** to {self.recipient.mention}.",
+            view=self
+        )
+        self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.sender_id:
+            return await interaction.response.send_message("Only the sender can cancel this.", ephemeral=True)
+            
+        await interaction.response.edit_message(content="❌ Gift cancelled.", view=None)
         self.stop()
 
 
@@ -210,6 +255,39 @@ class MdSettingsCog(commands.Cog, name="Settings"):
         # We'll initialize the view which will handle fetching and pagination
         view = SettingsCardListView(user, sort_by, self.bot, reverse)
         await view.update_view(interaction)
+
+    @md_group.command(
+        name="give", description="Gift a player card to another user"
+    )
+    @app_commands.autocomplete(identifier=player_autocomplete)
+    @app_commands.describe(
+        user="The user you want to give the card to",
+        identifier="The MatchDex card you want to give"
+    )
+    async def give(self, interaction: discord.Interaction, user: discord.Member, identifier: str):
+        if user.id == interaction.user.id:
+            return await interaction.response.send_message("You cannot give a card to yourself!", ephemeral=True)
+        if user.bot:
+            return await interaction.response.send_message("You cannot give cards to bots!", ephemeral=True)
+
+        # Find the card
+        card = await UserCard.objects.filter(
+            card_id__iexact=identifier,
+            owner__discord_id=interaction.user.id
+        ).select_related("template").afirst()
+
+        if not card:
+            return await interaction.response.send_message(
+                f"You don't own a card with ID **#{identifier}**.", ephemeral=True
+            )
+
+        view = ConfirmGiftView(interaction.user.id, user, card)
+        await interaction.response.send_message(
+            f"🤝 Are you sure you want to give your **{card.template.display_name}** (#{card.card_id}) to {user.mention}?\n"
+            "*This action is irreversible!*",
+            view=view,
+            ephemeral=True
+        )
 
 
 class SettingsCardSelect(discord.ui.Select):

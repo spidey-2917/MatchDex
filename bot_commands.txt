@@ -38,6 +38,14 @@
 - /trade start <user>: Initiate a trade request with another player.
 - /trade add <card_id>: Add a card to your current trade offer.
 - /trade remove <card_id>: Remove a card from your current trade offer.
+- /trade bulk_add [sort_by]: Add multiple cards to a trade via a selection menu.
+
+## User Profile & Data Management
+- /md list [sort_by]: View your entire card collection with sorting options.
+- /md show <card_id/player>: View detailed information and the card image for a specific card you own or a player.
+- /md give <user> <card_id>: Gift a player card from your collection to another user.
+- /md export: Download a JSON file containing all your user data.
+- /md delete: Permanently delete your MatchDex profile and all your data.
 
 ## Server Configuration (Administrator Permission Required)
 - /config spawn_channel <channel>: Set the channel where cards will automatically spawn.
