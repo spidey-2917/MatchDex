@@ -283,6 +283,7 @@ class TeamCog(commands.Cog, name="Teams"):
             app_commands.Choice(name="⚔️ AT1", value="at1"),
             app_commands.Choice(name="⚔️ AT2", value="at2"),
             app_commands.Choice(name="⚔️ AT3", value="at3"),
+            app_commands.Choice(name="⚔️ AT4", value="at4")
         ]
     )
     async def team_add(
@@ -479,6 +480,7 @@ class TeamCog(commands.Cog, name="Teams"):
             app_commands.Choice(name="⚔️ AT1", value="at1"),
             app_commands.Choice(name="⚔️ AT2", value="at2"),
             app_commands.Choice(name="⚔️ AT3", value="at3"),
+            app_commands.Choice(name="⚔️ AT4", value="at4")
         ]
     )
     async def team_remove(self, interaction: discord.Interaction, slot: str):
