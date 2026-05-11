@@ -267,6 +267,13 @@ class Lineup(models.Model):
         blank=True,
         related_name="slot_at3",
     )
+    at4 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_at4",
+    )
 
     # 3 substitute slots
     sub1 = models.ForeignKey(

@@ -110,6 +110,7 @@ class FormationSelect(discord.ui.Select):
                 "at1",
                 "at2",
                 "at3",
+                "at4",
                 "sub1",
                 "sub2",
                 "sub3",

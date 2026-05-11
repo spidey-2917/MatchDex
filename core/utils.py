@@ -163,35 +163,52 @@ def pick_random_card(category, card_type_filter=None):
         chosen_type = random.choices(["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1)[0]
 
     # 2. Pick card based on mode
+    spawnable_rarities = list(settings.rarity_weights.keys())
+
     if mode == "RARITY":
         rarity = random.choices(list(weights.keys()), weights=list(weights.values()), k=1)[
             0
         ]
-        qs = CardTemplate.objects.filter(card_type=chosen_type, rarity=rarity)
+        qs = CardTemplate.objects.filter(
+            card_type=chosen_type, rarity=rarity
+        ).filter(rarity__in=spawnable_rarities)
         if not qs.exists():
-            # Fallback: keep type but ignore rarity
-            fallback = CardTemplate.objects.filter(card_type=chosen_type)
+            # Fallback: keep type but ignore rarity (still filtering spawnable)
+            fallback = CardTemplate.objects.filter(
+                card_type=chosen_type, rarity__in=spawnable_rarities
+            )
             if fallback.exists():
                 return fallback.order_by("?").first()
-            # Last resort: any BASE card
-            return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
+            # Last resort: any BASE card (still filtering spawnable)
+            return (
+                CardTemplate.objects.filter(card_type="BASE", rarity__in=spawnable_rarities)
+                .order_by("?")
+                .first()
+            )
         return qs.order_by("?").first()
     else:
         # mode == 'OVR'
-        chosen_range = random.choices(
-            weights, weights=[w[2] for w in weights], k=1
-        )[0]
+        chosen_range = random.choices(weights, weights=[w[2] for w in weights], k=1)[0]
         min_ovr, max_ovr = chosen_range[0], chosen_range[1]
         qs = CardTemplate.objects.filter(
-            card_type=chosen_type, ovr__gte=min_ovr, ovr__lte=max_ovr
+            card_type=chosen_type,
+            ovr__gte=min_ovr,
+            ovr__lte=max_ovr,
+            rarity__in=spawnable_rarities,
         )
         if not qs.exists():
-            # Fallback: keep type but ignore OVR range
-            fallback = CardTemplate.objects.filter(card_type=chosen_type)
+            # Fallback: keep type but ignore OVR range (still filtering spawnable)
+            fallback = CardTemplate.objects.filter(
+                card_type=chosen_type, rarity__in=spawnable_rarities
+            )
             if fallback.exists():
                 return fallback.order_by("?").first()
-            # Last resort: any BASE card
-            return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
+            # Last resort: any BASE card (still filtering spawnable)
+            return (
+                CardTemplate.objects.filter(card_type="BASE", rarity__in=spawnable_rarities)
+                .order_by("?")
+                .first()
+            )
         return qs.order_by("?").first()
 
 
@@ -316,8 +333,8 @@ async def clear_card_from_lineups(user_card_id: int):
             Q(df3_id=user_card_id) | Q(df4_id=user_card_id) | Q(df5_id=user_card_id) | \
             Q(md1_id=user_card_id) | Q(md2_id=user_card_id) | Q(md3_id=user_card_id) | \
             Q(md4_id=user_card_id) | Q(md5_id=user_card_id) | Q(at1_id=user_card_id) | \
-            Q(at2_id=user_card_id) | Q(at3_id=user_card_id) | Q(sub1_id=user_card_id) | \
-            Q(sub2_id=user_card_id) | Q(sub3_id=user_card_id)
+            Q(at2_id=user_card_id) | Q(at3_id=user_card_id) | Q(at4_id=user_card_id) | \
+            Q(sub1_id=user_card_id) | Q(sub2_id=user_card_id) | Q(sub3_id=user_card_id)
 
     @sync_to_async
     def clear():
@@ -337,6 +354,7 @@ async def clear_card_from_lineups(user_card_id: int):
             if lineup.at1_id == user_card_id: lineup.at1 = None
             if lineup.at2_id == user_card_id: lineup.at2 = None
             if lineup.at3_id == user_card_id: lineup.at3 = None
+            if lineup.at4_id == user_card_id: lineup.at4 = None
             if lineup.sub1_id == user_card_id: lineup.sub1 = None
             if lineup.sub2_id == user_card_id: lineup.sub2 = None
             if lineup.sub3_id == user_card_id: lineup.sub3 = None
