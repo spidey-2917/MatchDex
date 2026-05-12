@@ -2,7 +2,8 @@ import discord
 from asgiref.sync import sync_to_async
 from django.db import models
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
+from datetime import datetime, timedelta, timezone
 
 from core.models import DiscordUser, Trade, TradeItem, UserCard
 from core.utils import CardListView
@@ -112,6 +113,12 @@ class TradeActionView(discord.ui.View):
         await db_trade.asave()
         del ACTIVE_TRADES[self.trade_id]
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        t = ACTIVE_TRADES.get(self.trade_id)
+        if t:
+            t["last_activity"] = datetime.now(timezone.utc)
+        return True
+
 
 class TradeBulkAddSelect(discord.ui.Select):
     def __init__(self, cards):
@@ -199,6 +206,48 @@ class TradeBulkAddView(CardListView):
 class TradeCog(commands.Cog, name="Trading"):
     def __init__(self, bot):
         self.bot = bot
+        self.check_inactive_trades.start()
+
+    def cog_unload(self):
+        self.check_inactive_trades.cancel()
+
+    @tasks.loop(minutes=5)
+    async def check_inactive_trades(self):
+        """Automatically cancel trades that have been inactive for 30 minutes."""
+        now = datetime.now(timezone.utc)
+        to_cancel = []
+
+        for tid, t in ACTIVE_TRADES.items():
+            last_act = t.get("last_activity")
+            if not last_act:
+                # If no activity yet, check creation time from DB or just set current
+                t["last_activity"] = now
+                continue
+
+            if now - last_act > timedelta(minutes=30):
+                to_cancel.append(tid)
+
+        for tid in to_cancel:
+            t = ACTIVE_TRADES.get(tid)
+            if not t:
+                continue
+
+            try:
+                # Update DB
+                db_trade = await Trade.objects.aget(id=t["db_id"])
+                db_trade.status = "CANCELLED"
+                await db_trade.asave()
+
+                # Update message if possible
+                if t.get("message"):
+                    await t["message"].edit(
+                        content="❌ Trade cancelled due to 30 minutes of inactivity.",
+                        view=None,
+                    )
+            except Exception:
+                pass
+            
+            del ACTIVE_TRADES[tid]
 
     async def cog_load(self):
         # Re-hydrate trades that were PENDING if the bot was restarted
@@ -241,6 +290,7 @@ class TradeCog(commands.Cog, name="Trading"):
                     "receiver_confirm": state_data.get("receiver_confirm", False),
                     "channel": channel,
                     "message": message,
+                    "last_activity": datetime.now(timezone.utc),
                 }
 
                 view = TradeActionView(trade_id, self)
@@ -286,6 +336,7 @@ class TradeCog(commands.Cog, name="Trading"):
             "initiator_confirm": t["initiator_confirm"],
             "receiver_confirm": t["receiver_confirm"],
         }
+        t["last_activity"] = datetime.now(timezone.utc)
         await db_trade.asave()
 
     async def init_trade(self, channel, initiator, receiver):
@@ -305,15 +356,23 @@ class TradeCog(commands.Cog, name="Trading"):
             "receiver_confirm": False,
             "channel": channel,
             "message": None,
+            "last_activity": datetime.now(timezone.utc),
         }
 
         embed = self.build_trade_embed(trade_id)
         view = TradeActionView(trade_id, self)
-        msg = await channel.send(embed=embed, view=view)
-        ACTIVE_TRADES[trade_id]["message"] = msg
-
-        t_obj.message_id = msg.id
-        await t_obj.asave()
+        try:
+            msg = await channel.send(embed=embed, view=view)
+            ACTIVE_TRADES[trade_id]["message"] = msg
+            t_obj.message_id = msg.id
+            await t_obj.asave()
+        except discord.Forbidden:
+            # Bot cannot send messages here
+            del ACTIVE_TRADES[trade_id]
+            t_obj.status = "CANCELLED"
+            await t_obj.asave()
+            # If this was triggered by a button, the user will see the error in the console or we could try a DM
+            # but for now we just fail gracefully to avoid the traceback.
 
     def build_trade_embed(self, trade_id):
         t = ACTIVE_TRADES[trade_id]
@@ -546,7 +605,6 @@ class TradeCog(commands.Cog, name="Trading"):
 
         if not trade_id or not trade_data:
             # Also check the database for stuck PENDING trades
-            from core.models import Trade
             stuck_trades = Trade.objects.filter(
                 status="PENDING"
             ).filter(
