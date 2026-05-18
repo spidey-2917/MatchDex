@@ -117,6 +117,8 @@ def get_drop_config(category):
         if not rates.exists():
             return "RARITY", settings.rarity_weights
         weights = {r.rarity: r.weight for r in rates if r.rarity}
+        if not weights:
+            return "RARITY", settings.rarity_weights
         return "RARITY", weights
     else:
         # mode == 'OVR'
@@ -173,17 +175,8 @@ def pick_random_card(category, card_type_filter=None):
             card_type=chosen_type, rarity=rarity
         ).filter(rarity__in=spawnable_rarities)
         if not qs.exists():
-            # Fallback: keep type but ignore rarity (still filtering spawnable)
-            fallback = CardTemplate.objects.filter(
-                card_type=chosen_type, rarity__in=spawnable_rarities
-            )
-            if fallback.exists():
-                return fallback.order_by("?").first()
-            # Last resort: any BASE card (still filtering spawnable)
-            return (
-                CardTemplate.objects.filter(card_type="BASE", rarity__in=spawnable_rarities)
-                .order_by("?")
-                .first()
+            raise RuntimeError(
+                f"No card templates found for card_type='{chosen_type}' and rarity='{rarity}'."
             )
         return qs.order_by("?").first()
     else:
@@ -197,17 +190,8 @@ def pick_random_card(category, card_type_filter=None):
             rarity__in=spawnable_rarities,
         )
         if not qs.exists():
-            # Fallback: keep type but ignore OVR range (still filtering spawnable)
-            fallback = CardTemplate.objects.filter(
-                card_type=chosen_type, rarity__in=spawnable_rarities
-            )
-            if fallback.exists():
-                return fallback.order_by("?").first()
-            # Last resort: any BASE card (still filtering spawnable)
-            return (
-                CardTemplate.objects.filter(card_type="BASE", rarity__in=spawnable_rarities)
-                .order_by("?")
-                .first()
+            raise RuntimeError(
+                f"No card templates found for card_type='{chosen_type}' in OVR range {min_ovr}–{max_ovr}."
             )
         return qs.order_by("?").first()
 
@@ -224,10 +208,9 @@ def get_random_card_by_rarity(rarity):
     chosen_type = random.choices(["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1)[0]
     cards = CardTemplate.objects.filter(card_type=chosen_type, rarity=rarity)
     if not cards.exists():
-        fallback = CardTemplate.objects.filter(card_type=chosen_type)
-        if fallback.exists():
-            return fallback.order_by("?").first()
-        return CardTemplate.objects.filter(card_type="BASE").order_by("?").first()
+        raise RuntimeError(
+            f"No card templates found for card_type='{chosen_type}' and rarity='{rarity}'."
+        )
     return cards.order_by("?").first()
 
 
@@ -262,7 +245,8 @@ def generate_card_image(card_template):
         "Premium": (220, 20, 60),
     }
 
-    color = rarity_colors.get(card_template.rarity, (255, 255, 255))
+    base_rarity = card_template.rarity.split()[0] if card_template.rarity else ""
+    color = rarity_colors.get(base_rarity, (255, 255, 255))
     img = Image.new("RGB", (width, height), color=color)
     draw = ImageDraw.Draw(img)
 

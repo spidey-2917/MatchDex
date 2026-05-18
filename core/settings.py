@@ -49,11 +49,21 @@ class Settings:
     # ── Rarity ───────────────────────────────────────────────
     rarity_weights: dict[str, float] = field(
         default_factory=lambda: {
-            "Common": 0.70,
-            "Uncommon": 0.20,
-            "Rare": 0.08,
-            "Epic": 0.015,
-            "Legendary": 0.005,
+            "Common I": 0.3,
+            "Common II": 0.25,
+            "Common III": 0.15,
+            "Uncommon I": 0.1,
+            "Uncommon II": 0.06,
+            "Uncommon III": 0.04,
+            "Rare I": 0.04,
+            "Rare II": 0.025,
+            "Rare III": 0.015,
+            "Epic I": 0.007,
+            "Epic II": 0.005,
+            "Epic III": 0.003,
+            "Legendary I": 0.0025,
+            "Legendary II": 0.0020,
+            "Legendary III": 0.0005,
         }
     )
 

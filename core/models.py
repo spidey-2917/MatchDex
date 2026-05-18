@@ -67,11 +67,21 @@ class CardTemplate(models.Model):
     ]
 
     RARITIES = [
-        ("Common", "Common"),
-        ("Uncommon", "Uncommon"),
-        ("Rare", "Rare"),
-        ("Epic", "Epic"),
-        ("Legendary", "Legendary"),
+        ("Common I", "Common I (Weight: 0.3, 42.9% of Common)"),
+        ("Common II", "Common II (Weight: 0.25, 35.7% of Common)"),
+        ("Common III", "Common III (Weight: 0.15, 21.4% of Common)"),
+        ("Uncommon I", "Uncommon I (Weight: 0.1, 50.0% of Uncommon)"),
+        ("Uncommon II", "Uncommon II (Weight: 0.06, 30.0% of Uncommon)"),
+        ("Uncommon III", "Uncommon III (Weight: 0.04, 20.0% of Uncommon)"),
+        ("Rare I", "Rare I (Weight: 0.04, 50.0% of Rare)"),
+        ("Rare II", "Rare II (Weight: 0.025, 31.3% of Rare)"),
+        ("Rare III", "Rare III (Weight: 0.015, 18.8% of Rare)"),
+        ("Epic I", "Epic I (Weight: 0.007, 46.7% of Epic)"),
+        ("Epic II", "Epic II (Weight: 0.005, 33.3% of Epic)"),
+        ("Epic III", "Epic III (Weight: 0.003, 20.0% of Epic)"),
+        ("Legendary I", "Legendary I (Weight: 0.0025, 50.0% of Legendary)"),
+        ("Legendary II", "Legendary II (Weight: 0.0020, 40.0% of Legendary)"),
+        ("Legendary III", "Legendary III (Weight: 0.0005, 10.0% of Legendary)"),
         ("Premium", "Premium"),
     ]
 
@@ -438,10 +448,10 @@ class RateConfig(models.Model):
             return "All weights are 0"
         parts = []
         for r in rates:
-            pct = (r.weight / total) * 100
             if self.mode == "RARITY":
-                parts.append(f"{r.rarity}: {pct:.1f}%")
+                parts.append(f"{r.rarity}: {r.percentage}")
             else:
+                pct = (r.weight / total) * 100
                 parts.append(f"OVR {r.min_ovr}–{r.max_ovr}: {pct:.1f}%")
         return " | ".join(parts)
 
@@ -481,7 +491,19 @@ class SpawnRate(models.Model):
 
     @property
     def percentage(self):
-        total = sum(r.weight for r in self.config.rates.all())
+        rates = self.config.rates.all()
+        total = sum(r.weight for r in rates)
         if total == 0:
             return "0%"
+        
+        if self.config.mode == "RARITY" and self.rarity:
+            parts = self.rarity.split()
+            if len(parts) > 1:
+                base_name = parts[0]
+                category_total = sum(r.weight for r in rates if r.rarity and r.rarity.startswith(base_name))
+                if category_total > 0:
+                    sub_pct = (self.weight / category_total) * 100
+                    cat_pct = (category_total / total) * 100
+                    return f"{sub_pct:.1f}% (of {cat_pct:.1f}% {base_name})"
+        
         return f"{(self.weight / total) * 100:.1f}%"
