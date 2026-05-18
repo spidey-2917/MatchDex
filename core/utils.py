@@ -202,9 +202,23 @@ def pick_random_card(category, card_type_filter=None):
                 break
                 
         if not qs:
-            raise RuntimeError(
-                f"No card templates found for card_type='{chosen_type}' in rarity fallback chain {fallback_rarities}."
+            # First fallback: keep chosen_type but ignore rarity
+            fallback_qs = CardTemplate.objects.filter(
+                card_type=chosen_type, rarity__in=spawnable_rarities
             )
+            if fallback_qs.exists():
+                qs = fallback_qs
+            else:
+                # Last resort: any BASE card with any spawnable rarity
+                last_resort_qs = CardTemplate.objects.filter(
+                    card_type="BASE", rarity__in=spawnable_rarities
+                )
+                if last_resort_qs.exists():
+                    qs = last_resort_qs
+                else:
+                    # Absolute last resort: any card template at all!
+                    qs = CardTemplate.objects.all()
+                    
         return qs.order_by("?").first()
     else:
         # mode == 'OVR'
@@ -217,9 +231,23 @@ def pick_random_card(category, card_type_filter=None):
             rarity__in=spawnable_rarities,
         )
         if not qs.exists():
-            raise RuntimeError(
-                f"No card templates found for card_type='{chosen_type}' in OVR range {min_ovr}–{max_ovr}."
+            # First fallback: keep chosen_type but ignore OVR range
+            fallback_qs = CardTemplate.objects.filter(
+                card_type=chosen_type, rarity__in=spawnable_rarities
             )
+            if fallback_qs.exists():
+                qs = fallback_qs
+            else:
+                # Last resort: any BASE card
+                last_resort_qs = CardTemplate.objects.filter(
+                    card_type="BASE", rarity__in=spawnable_rarities
+                )
+                if last_resort_qs.exists():
+                    qs = last_resort_qs
+                else:
+                    # Absolute last resort: any card template at all!
+                    qs = CardTemplate.objects.all()
+                    
         return qs.order_by("?").first()
 
 
@@ -243,9 +271,19 @@ def get_random_card_by_rarity(rarity):
             break
             
     if not cards:
-        raise RuntimeError(
-            f"No card templates found for card_type='{chosen_type}' in rarity fallback chain {fallback_rarities}."
-        )
+        # First fallback: keep chosen_type but ignore rarity
+        fallback_qs = CardTemplate.objects.filter(card_type=chosen_type)
+        if fallback_qs.exists():
+            cards = fallback_qs
+        else:
+            # Last resort: any BASE card
+            last_resort_qs = CardTemplate.objects.filter(card_type="BASE")
+            if last_resort_qs.exists():
+                cards = last_resort_qs
+            else:
+                # Absolute last resort: any card template at all!
+                cards = CardTemplate.objects.all()
+                
     return cards.order_by("?").first()
 
 
