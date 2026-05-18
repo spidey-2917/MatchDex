@@ -134,6 +134,25 @@ def get_drop_config(category):
         return "OVR", ovr_ranges
 
 
+def get_fallback_rarities(rolled_rarity):
+    if not rolled_rarity or " " not in rolled_rarity:
+        return [rolled_rarity]
+    try:
+        base_category, level = rolled_rarity.split(" ", 1)
+        if level not in ("I", "II", "III"):
+            return [rolled_rarity]
+    except Exception:
+        return [rolled_rarity]
+
+    levels = ["III", "II", "I"]
+    fallback_sequence = [rolled_rarity]
+    for lvl in levels:
+        candidate = f"{base_category} {lvl}"
+        if candidate not in fallback_sequence:
+            fallback_sequence.append(candidate)
+    return fallback_sequence
+
+
 def pick_random_card(category, card_type_filter=None):
     """
     Pick a random card based on the current drop rate configuration.
@@ -171,12 +190,20 @@ def pick_random_card(category, card_type_filter=None):
         rarity = random.choices(list(weights.keys()), weights=list(weights.values()), k=1)[
             0
         ]
-        qs = CardTemplate.objects.filter(
-            card_type=chosen_type, rarity=rarity
-        ).filter(rarity__in=spawnable_rarities)
-        if not qs.exists():
+        
+        fallback_rarities = get_fallback_rarities(rarity)
+        qs = None
+        for r_candidate in fallback_rarities:
+            candidate_qs = CardTemplate.objects.filter(
+                card_type=chosen_type, rarity=r_candidate
+            ).filter(rarity__in=spawnable_rarities)
+            if candidate_qs.exists():
+                qs = candidate_qs
+                break
+                
+        if not qs:
             raise RuntimeError(
-                f"No card templates found for card_type='{chosen_type}' and rarity='{rarity}'."
+                f"No card templates found for card_type='{chosen_type}' in rarity fallback chain {fallback_rarities}."
             )
         return qs.order_by("?").first()
     else:
@@ -206,10 +233,18 @@ def get_random_rarity():
 def get_random_card_by_rarity(rarity):
     """Deprecated: Use pick_random_card instead. Kept for minimal compatibility."""
     chosen_type = random.choices(["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1)[0]
-    cards = CardTemplate.objects.filter(card_type=chosen_type, rarity=rarity)
-    if not cards.exists():
+    
+    fallback_rarities = get_fallback_rarities(rarity)
+    cards = None
+    for r_candidate in fallback_rarities:
+        candidate_qs = CardTemplate.objects.filter(card_type=chosen_type, rarity=r_candidate)
+        if candidate_qs.exists():
+            cards = candidate_qs
+            break
+            
+    if not cards:
         raise RuntimeError(
-            f"No card templates found for card_type='{chosen_type}' and rarity='{rarity}'."
+            f"No card templates found for card_type='{chosen_type}' in rarity fallback chain {fallback_rarities}."
         )
     return cards.order_by("?").first()
 
