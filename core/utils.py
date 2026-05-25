@@ -453,20 +453,22 @@ class CardListView(discord.ui.View):
     Reusable base view for listing cards with pagination.
     Subclasses should override add_selection_menu to customize behavior.
     """
-    def __init__(self, user_db, sort_by, bot, reverse=False, ephemeral=False):
+    def __init__(self, user_db, sort_by, bot, reverse=False, ephemeral=False, requester_id=None):
         super().__init__(timeout=180)
         self.user_db = user_db
         self.sort_by = sort_by
         self.bot = bot
         self.reverse = reverse
         self.ephemeral = ephemeral
+        self.requester_id = requester_id
         self.page = 0
         self.page_size = 25
         self.total_cards = 0
         self.current_cards = []
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user_db.discord_id:
+        allowed_user_id = self.requester_id or self.user_db.discord_id
+        if interaction.user.id != allowed_user_id:
             await interaction.response.send_message(
                 "Only the user who opened this list can control it.", ephemeral=True
             )

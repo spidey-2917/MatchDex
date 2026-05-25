@@ -78,8 +78,10 @@ class ConfirmGiftView(discord.ui.View):
         target_user, _ = await DiscordUser.objects.aget_or_create(
             discord_id=self.recipient.id, defaults={"username": self.recipient.name}
         )
+        sender_user = await DiscordUser.objects.aget(discord_id=self.sender_id)
         
         self.card.owner = target_user
+        self.card.traded_by = sender_user
         await self.card.asave()
 
         # Clear from sender's lineups
@@ -281,7 +283,7 @@ class MdSettingsCog(commands.Cog, name="Settings"):
                 )
 
         # We'll initialize the view which will handle fetching and pagination
-        view = SettingsCardListView(target_db, sort_by, self.bot, reverse)
+        view = SettingsCardListView(target_db, sort_by, self.bot, reverse, requester_id=interaction.user.id)
         await view.update_view(interaction)
 
     @md_group.command(
