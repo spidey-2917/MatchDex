@@ -36,13 +36,21 @@ class GeneralCog(commands.Cog, name="General"):
 
     @app_commands.command(name="collection", description="Show your card collection summary")
     async def collection(self, interaction: discord.Interaction, user: discord.Member = None):
-        await interaction.response.defer()
-        
         target_user = user or interaction.user
         db_user, _ = await DiscordUser.objects.aget_or_create(
             discord_id=target_user.id,
             defaults={"username": target_user.name},
         )
+
+        # Privacy check when viewing someone else's collection
+        if target_user.id != interaction.user.id and db_user.is_inventory_private:
+            is_requester_admin = await self.bot.is_admin(interaction.user)
+            if not is_requester_admin:
+                return await interaction.response.send_message(
+                    f"🔒 **{target_user.display_name}**'s inventory is set to private.", ephemeral=True
+                )
+
+        await interaction.response.defer()
 
         from core.models import TradeItem, UserCard
         from django.db.models import Count

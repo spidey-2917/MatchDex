@@ -89,8 +89,14 @@ class ConfirmGiftView(discord.ui.View):
             child.disabled = True
         
         await interaction.response.edit_message(
-            content=f"🎁 **Gift Sent!** You gave **{self.card.template.display_name}** to {self.recipient.mention}.",
+            content=f"🎁 Gift confirmed!",
             view=self
+        )
+
+        # Send a PUBLIC message so everyone can see the gift
+        await interaction.channel.send(
+            f"🎁 **{interaction.user.mention}** gave **{self.card.template.display_name}** "
+            f"(`#{self.card.card_id}`) to {self.recipient.mention}!"
         )
         self.stop()
 
@@ -194,7 +200,7 @@ class MdSettingsCog(commands.Cog, name="Settings"):
             # 1. Try finding by unique UserCard ID
             uc = (
                 UserCard.objects.filter(card_id__iexact=identifier)
-                .select_related("template", "owner")
+                .select_related("template", "owner", "traded_by")
                 .first()
             )
             if uc:
@@ -220,9 +226,20 @@ class MdSettingsCog(commands.Cog, name="Settings"):
 
         if user_card:
             caught_str = f"Caught on {discord.utils.format_dt(user_card.caught_at, 'f')} ({discord.utils.format_dt(user_card.caught_at, 'R')})."
+            
+            # Build traded_by line
+            traded_by_str = ""
+            if user_card.traded_by:
+                trader_name = user_card.traded_by.username or str(user_card.traded_by.discord_id)
+                if interaction.guild:
+                    member = interaction.guild.get_member(user_card.traded_by.discord_id)
+                    if member:
+                        trader_name = member.display_name
+                traded_by_str = f"\nTraded by: {trader_name}"
+            
             content = (
                 f"ID: #{user_card.card_id}\n"
-                f"{caught_str}\n\n"
+                f"{caught_str}{traded_by_str}\n\n"
                 f"ATK: {template.attack_stat}\n"
                 f"DEF: {template.defence_stat}"
             )
@@ -246,14 +263,25 @@ class MdSettingsCog(commands.Cog, name="Settings"):
             app_commands.Choice(name="Catch Date (Newest)", value="date"),
         ]
     )
-    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False):
-        user, _ = await DiscordUser.objects.aget_or_create(
-            discord_id=interaction.user.id,
-            defaults={"username": interaction.user.name},
+    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False, user: discord.Member = None):
+        # Determine target user
+        target_member = user or interaction.user
+        target_db, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=target_member.id,
+            defaults={"username": target_member.name},
         )
 
+        # Privacy check: if viewing someone else's inventory
+        if target_member.id != interaction.user.id and target_db.is_inventory_private:
+            # Check if requester is a bot admin (they bypass privacy)
+            is_requester_admin = await self.bot.is_admin(interaction.user)
+            if not is_requester_admin:
+                return await interaction.response.send_message(
+                    f"🔒 **{target_member.display_name}**'s inventory is set to private.", ephemeral=True
+                )
+
         # We'll initialize the view which will handle fetching and pagination
-        view = SettingsCardListView(user, sort_by, self.bot, reverse)
+        view = SettingsCardListView(target_db, sort_by, self.bot, reverse)
         await view.update_view(interaction)
 
     @md_group.command(
@@ -289,6 +317,30 @@ class MdSettingsCog(commands.Cog, name="Settings"):
             ephemeral=True
         )
 
+    @md_group.command(
+        name="privacy", description="Toggle your inventory privacy (hide your collection from others)"
+    )
+    async def privacy(self, interaction: discord.Interaction):
+        db_user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id,
+            defaults={"username": interaction.user.name},
+        )
+        # Toggle
+        db_user.is_inventory_private = not db_user.is_inventory_private
+        await db_user.asave()
+
+        if db_user.is_inventory_private:
+            await interaction.response.send_message(
+                "🔒 Your inventory is now **private**. Other users cannot view your card list.\n"
+                "*(Bot administrators can still view your inventory.)*",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "🔓 Your inventory is now **public**. Anyone can view your card list.",
+                ephemeral=True
+            )
+
 
 class SettingsCardSelect(discord.ui.Select):
     def __init__(self, cards):
@@ -312,7 +364,7 @@ class SettingsCardSelect(discord.ui.Select):
         card_id = self.values[0]
         card = (
             await UserCard.objects.filter(card_id=card_id)
-            .select_related("template", "owner")
+            .select_related("template", "owner", "traded_by")
             .afirst()
         )
         if not card:
@@ -322,9 +374,20 @@ class SettingsCardSelect(discord.ui.Select):
         file = discord.File(fp=image_buffer, filename=f"{card.template.name}.png")
 
         caught_str = f"Caught on {discord.utils.format_dt(card.caught_at, 'f')} ({discord.utils.format_dt(card.caught_at, 'R')})."
+        
+        # Build traded_by line
+        traded_by_str = ""
+        if card.traded_by:
+            trader_name = card.traded_by.username or str(card.traded_by.discord_id)
+            if interaction.guild:
+                member = interaction.guild.get_member(card.traded_by.discord_id)
+                if member:
+                    trader_name = member.display_name
+            traded_by_str = f"\nTraded by: {trader_name}"
+        
         content = (
             f"ID: #{card.card_id}\n"
-            f"{caught_str}\n\n"
+            f"{caught_str}{traded_by_str}\n\n"
             f"ATK: {card.template.attack_stat}\n"
             f"DEF: {card.template.defence_stat}"
         )

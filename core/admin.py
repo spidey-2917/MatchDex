@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils.html import format_html
 
 from .models import (
     Blacklist,
@@ -12,8 +13,12 @@ from .models import (
     PromoCode,
     PromoCodeRedemption,
     RateConfig,
+    SBC,
+    SBCRequirement,
     ServerSettings,
     SpawnRate,
+    Trade,
+    TradeItem,
     UserCard,
     UserLogo,
 )
@@ -107,10 +112,84 @@ class DiscordUserAdmin(admin.ModelAdmin):
         "points",
         "wins",
         "losses",
+        "cards_collected",
         "is_premium",
         "is_admin",
+        "is_inventory_private",
     )
     search_fields = ("discord_id", "username")
+    readonly_fields = (
+        "get_trade_count",
+        "get_catch_count",
+        "get_pack_opens",
+        "get_bet_count",
+        "get_activity_summary",
+    )
+    fieldsets = (
+        (None, {
+            "fields": (
+                "discord_id", "username", "points",
+                "wins", "losses", "draws", "cards_collected",
+                "is_premium", "is_booster", "is_admin", "is_inventory_private",
+            )
+        }),
+        ("Cooldowns", {
+            "fields": (
+                "last_pack_daily", "last_pack_weekly",
+                "last_pack_event", "last_pack_premium", "last_pack_booster",
+            ),
+            "classes": ("collapse",),
+        }),
+        ("Activity Stats (read-only)", {
+            "fields": (
+                "get_activity_summary",
+                "get_trade_count", "get_catch_count",
+                "get_pack_opens", "get_bet_count",
+            ),
+        }),
+    )
+
+    def get_trade_count(self, obj):
+        from django.db.models import Q
+        count = Trade.objects.filter(
+            Q(initiator=obj) | Q(receiver=obj),
+            status="COMPLETED"
+        ).count()
+        return count
+    get_trade_count.short_description = "Completed Trades"
+
+    def get_catch_count(self, obj):
+        return UserCard.objects.filter(owner=obj, traded_by__isnull=True).count()
+    get_catch_count.short_description = "Cards Caught (not traded)"
+
+    def get_pack_opens(self, obj):
+        pack_commands = ["pack_daily", "pack_weekly", "pack_event", "pack_premium", "pack_booster"]
+        count = CommandLog.objects.filter(
+            user_id=obj.discord_id,
+            command_name__in=pack_commands,
+        ).count()
+        return count
+    get_pack_opens.short_description = "Packs Opened"
+
+    def get_bet_count(self, obj):
+        count = CommandLog.objects.filter(
+            user_id=obj.discord_id,
+            command_name__in=["wager challenge", "wager"],
+        ).count()
+        return count
+    get_bet_count.short_description = "Wagers/Bets"
+
+    def get_activity_summary(self, obj):
+        trades = self.get_trade_count(obj)
+        catches = self.get_catch_count(obj)
+        packs = self.get_pack_opens(obj)
+        bets = self.get_bet_count(obj)
+        return format_html(
+            "<strong>Trades:</strong> {} | <strong>Catches:</strong> {} | "
+            "<strong>Packs:</strong> {} | <strong>Bets:</strong> {}",
+            trades, catches, packs, bets
+        )
+    get_activity_summary.short_description = "Quick Summary"
 
 
 @admin.register(CardTemplate)
@@ -184,6 +263,21 @@ class CommandLogAdmin(admin.ModelAdmin):
     list_display = ("user_id", "command_name", "guild_id", "timestamp")
     list_filter = ("command_name", "timestamp")
     search_fields = ("user_id", "guild_id")
+
+
+class SBCRequirementInline(admin.TabularInline):
+    model = SBCRequirement
+    extra = 1
+    autocomplete_fields = ["specific_template"]
+
+
+@admin.register(SBC)
+class SBCAdmin(admin.ModelAdmin):
+    list_display = ("name", "reward_card", "is_active", "end_date")
+    list_filter = ("is_active", "end_date")
+    search_fields = ("name", "reward_card__name")
+    autocomplete_fields = ["reward_card"]
+    inlines = [SBCRequirementInline]
 
 
 @admin.register(PremiumRole)

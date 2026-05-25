@@ -668,6 +668,7 @@ class TradeCog(commands.Cog, name="Trading"):
                 continue
 
             fresh_card.owner = receiver_db
+            fresh_card.traded_by = initiator_db
             await fresh_card.asave()
 
             from core.utils import clear_card_from_lineups
@@ -686,6 +687,7 @@ class TradeCog(commands.Cog, name="Trading"):
                 continue
 
             fresh_card.owner = initiator_db
+            fresh_card.traded_by = receiver_db
             await fresh_card.asave()
 
             from core.utils import clear_card_from_lineups
@@ -699,12 +701,80 @@ class TradeCog(commands.Cog, name="Trading"):
             )
 
         db_trade.status = "COMPLETED"
+        db_trade.completed_at = datetime.now(timezone.utc)
         await db_trade.asave()
 
         embed = discord.Embed(
-            title="🎉 Trade Completed successfully!", color=discord.Color.green()
+            title="🎉 Trade Completed successfully!",
+            description=f"Trade ID: `#{db_trade.id}`",
+            color=discord.Color.green()
         )
         await t["channel"].send(embed=embed)
+
+    @trade_group.command(
+        name="history", description="View your trade history"
+    )
+    @app_commands.describe(user="View trade history with a specific user (optional)")
+    async def trade_history(self, interaction: discord.Interaction, user: discord.Member = None):
+        await interaction.response.defer(ephemeral=True)
+
+        @sync_to_async
+        def get_history():
+            from django.db.models import Q, Count
+            qs = Trade.objects.filter(
+                Q(initiator_id=interaction.user.id) | Q(receiver_id=interaction.user.id),
+                status="COMPLETED"
+            )
+            if user:
+                qs = qs.filter(
+                    Q(initiator_id=user.id) | Q(receiver_id=user.id)
+                )
+            return list(
+                qs.order_by("-completed_at")
+                .select_related("initiator", "receiver")
+                .annotate(item_count=Count("items"))[:20]
+            )
+
+        trades = await get_history()
+
+        if not trades:
+            target_text = f" with **{user.display_name}**" if user else ""
+            return await interaction.followup.send(
+                f"No completed trades found{target_text}.", ephemeral=True
+            )
+
+        embed = discord.Embed(
+            title="📜 Trade History",
+            description=f"Showing last {len(trades)} completed trade(s)"
+                        + (f" with {user.mention}" if user else ""),
+            color=discord.Color.blue()
+        )
+
+        for trade in trades:
+            # Determine the other party
+            if trade.initiator_id == interaction.user.id:
+                partner = trade.receiver
+            else:
+                partner = trade.initiator
+
+            # Try to resolve the partner's display name from the guild
+            partner_name = partner.username or str(partner.discord_id)
+            if interaction.guild:
+                member = interaction.guild.get_member(partner.discord_id)
+                if member:
+                    partner_name = member.display_name
+
+            timestamp = ""
+            if trade.completed_at:
+                timestamp = f" • {discord.utils.format_dt(trade.completed_at, 'R')}"
+
+            embed.add_field(
+                name=f"Trade #{trade.id} — with {partner_name}",
+                value=f"{trade.item_count} card(s) exchanged{timestamp}",
+                inline=False
+            )
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 async def setup(bot):

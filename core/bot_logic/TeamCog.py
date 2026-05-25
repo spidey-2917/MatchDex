@@ -325,8 +325,9 @@ class TeamCog(commands.Cog, name="Teams"):
             if not user_card:
                 return "no_card"
 
-            # Check if this player (template name) is already in another slot
-            for s in valid_slots:
+            # Check if this player (template name) is already in another slot (including subs)
+            all_slots = valid_slots + ["sub1", "sub2", "sub3"]
+            for s in all_slots:
                 if s == slot:
                     continue
                 existing = getattr(lineup, s, None)

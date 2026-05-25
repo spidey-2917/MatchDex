@@ -94,6 +94,7 @@ class Settings:
             "core.bot_logic.TeamCog",
             "core.bot_logic.TradeCog",
             "core.bot_logic.WagerCog",
+            "core.bot_logic.SBCCog",
         ]
     )
 

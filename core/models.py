@@ -20,6 +20,7 @@ class DiscordUser(models.Model):
     is_premium = models.BooleanField(default=False)
     is_booster = models.BooleanField(default=False)
     is_admin = models.BooleanField(default=False)
+    is_inventory_private = models.BooleanField(default=False)
     joined_at = models.DateTimeField(auto_now_add=True)
 
     last_pack_daily = models.DateTimeField(null=True, blank=True)
@@ -121,6 +122,11 @@ class UserCard(models.Model):
         DiscordUser, on_delete=models.CASCADE, related_name="inventory"
     )
     template = models.ForeignKey(CardTemplate, on_delete=models.CASCADE)
+    traded_by = models.ForeignKey(
+        DiscordUser, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='cards_traded_away',
+        help_text="The user who last traded this card to the current owner"
+    )
     caught_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
@@ -507,3 +513,50 @@ class SpawnRate(models.Model):
                     return f"{sub_pct:.1f}% (of {cat_pct:.1f}% {base_name})"
         
         return f"{(self.weight / total) * 100:.1f}%"
+
+
+class SBC(models.Model):
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    reward_card = models.ForeignKey(
+        CardTemplate, on_delete=models.CASCADE, related_name="sbc_rewards"
+    )
+    is_active = models.BooleanField(default=True)
+    end_date = models.DateTimeField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.name} (Active: {self.is_active})"
+
+
+class SBCRequirement(models.Model):
+    sbc = models.ForeignKey(SBC, on_delete=models.CASCADE, related_name="requirements")
+    quantity = models.IntegerField(default=1)
+
+    # Flexible Requirement Fields
+    specific_template = models.ForeignKey(
+        CardTemplate, on_delete=models.CASCADE, blank=True, null=True, related_name="+"
+    )
+    min_ovr = models.IntegerField(blank=True, null=True)
+    required_rarity = models.CharField(
+        max_length=20, choices=CardTemplate.RARITIES, blank=True, null=True
+    )
+    required_club = models.CharField(max_length=100, blank=True, null=True)
+    required_position = models.CharField(
+        max_length=5, choices=CardTemplate.POSITIONS, blank=True, null=True
+    )
+
+    def __str__(self):
+        conditions = []
+        if self.specific_template:
+            conditions.append(f"Template: {self.specific_template.name}")
+        if self.min_ovr:
+            conditions.append(f"Min OVR: {self.min_ovr}")
+        if self.required_rarity:
+            conditions.append(f"Rarity: {self.required_rarity}")
+        if self.required_club:
+            conditions.append(f"Club: {self.required_club}")
+        if self.required_position:
+            conditions.append(f"Position: {self.required_position}")
+        
+        cond_str = ", ".join(conditions) if conditions else "Any Card"
+        return f"{self.quantity}x [{cond_str}]"
