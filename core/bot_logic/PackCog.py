@@ -26,12 +26,23 @@ class PackCog(commands.Cog, name="Packs"):
             discord_id=interaction.user.id, defaults={"username": interaction.user.name}
         )
 
+        # Stash check
+        from core.models import Pack, UserPack
+        pack_obj = await Pack.objects.filter(code=pack_type).afirst()
+        used_stash = False
+        user_pack = None
+        
+        if pack_obj:
+            user_pack = await UserPack.objects.filter(user=user, pack=pack_obj).afirst()
+            if user_pack and user_pack.stash_count > 0:
+                used_stash = True
+
         # Cooldown check
         now = timezone.now()
         last_redeem_attr = f"last_pack_{pack_type}"
-        last_redeem = getattr(user, last_redeem_attr)
+        last_redeem = getattr(user, last_redeem_attr, None)
 
-        if cooldown_days and last_redeem:
+        if not used_stash and cooldown_days and last_redeem:
             if now < last_redeem + timedelta(days=cooldown_days):
                 remaining = (last_redeem + timedelta(days=cooldown_days)) - now
                 hours, remainder = divmod(int(remaining.total_seconds()), 3600)
@@ -57,7 +68,16 @@ class PackCog(commands.Cog, name="Packs"):
 
         # Save record
         await UserCard.objects.acreate(owner=user, template=card)
-        setattr(user, last_redeem_attr, now)
+        if used_stash:
+            user_pack.stash_count -= 1
+            await user_pack.asave()
+            
+        if hasattr(user, last_redeem_attr):
+            setattr(user, last_redeem_attr, now)
+        elif user_pack:
+            user_pack.last_opened_at = now
+            await user_pack.asave()
+            
         user.cards_collected += 1
         await user.asave()
 
@@ -241,6 +261,64 @@ class PackCog(commands.Cog, name="Packs"):
             await interaction.response.send_message(
                 "Unknown reward type for this promo code.", ephemeral=True
             )
+
+    async def pack_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        from core.models import Pack
+        @sync_to_async
+        def get_choices():
+            qs = Pack.objects.all()
+            if current:
+                qs = qs.filter(name__icontains=current)
+            return list(qs[:25])
+        
+        packs = await get_choices()
+        return [app_commands.Choice(name=p.name, value=p.code) for p in packs]
+
+    @app_commands.command(
+        name="pack_open", description="Open a custom or stashed pack by name"
+    )
+    @app_commands.autocomplete(pack_name=pack_autocomplete)
+    async def pack_open(self, interaction: discord.Interaction, pack_name: str):
+        from core.models import Pack
+        pack_obj = await Pack.objects.filter(code=pack_name).afirst()
+        if not pack_obj:
+            return await interaction.response.send_message("Pack not found!", ephemeral=True)
+            
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+        
+        if pack_obj.is_premium_only and not user.is_premium:
+            # Check for premium role
+            has_premium_role = False
+            if isinstance(interaction.user, discord.Member):
+                from core.models import PremiumRole
+                premium_role_ids = set()
+                async for pr in PremiumRole.objects.all():
+                    premium_role_ids.add(pr.role_id)
+                has_premium_role = any(
+                    role.id in premium_role_ids for role in interaction.user.roles
+                )
+            if not has_premium_role:
+                return await interaction.response.send_message(
+                    "This pack is only for Premium members!", ephemeral=True
+                )
+                
+        # Card type filter logic
+        c_filter = None
+        if pack_obj.card_type_filter != "ANY":
+            c_filter = pack_obj.card_type_filter
+        if pack_obj.event_name_filter:
+            c_filter = "EVENT"
+            
+        await self.open_pack(
+            interaction, 
+            pack_type=pack_obj.code, 
+            card_filter_type=c_filter, 
+            cooldown_days=pack_obj.cooldown_days
+        )
 
 
 async def setup(bot):

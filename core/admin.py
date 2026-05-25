@@ -21,6 +21,8 @@ from .models import (
     TradeItem,
     UserCard,
     UserLogo,
+    Pack,
+    UserPack,
 )
 
 
@@ -80,17 +82,17 @@ class RateConfigAdmin(admin.ModelAdmin):
             # OVR mode defaults
             if config.category == "PACK_PREMIUM":
                 ovr_defaults = [
+                    (86, 88, 40.0),
+                    (89, 91, 30.0),
+                    (91, 93, 20.0),
+                    (94, 99, 10.0),
+                ]
+            else:
+                ovr_defaults = [
                     (80, 84, 30.0),
                     (85, 87, 50.0),
                     (88, 90, 15.0),
                     (91, 99, 5.0),
-                ]
-            else:
-                ovr_defaults = [
-                    (0, 79, 15.0),
-                    (80, 85, 70.0),
-                    (86, 87, 13.0),
-                    (88, 99, 2.0),
                 ]
             for min_ovr, max_ovr, weight in ovr_defaults:
                 SpawnRate.objects.create(
@@ -284,3 +286,16 @@ class SBCAdmin(admin.ModelAdmin):
 class PremiumRoleAdmin(admin.ModelAdmin):
     list_display = ("role_id", "label", "added_at")
     search_fields = ("role_id", "label")
+
+
+@admin.register(Pack)
+class PackAdmin(admin.ModelAdmin):
+    list_display = ("name", "code", "cooldown_days", "is_premium_only")
+    search_fields = ("name", "code")
+
+
+@admin.register(UserPack)
+class UserPackAdmin(admin.ModelAdmin):
+    list_display = ("user", "pack", "stash_count", "last_opened_at")
+    search_fields = ("user__username", "user__discord_id", "pack__name")
+    list_filter = ("pack",)

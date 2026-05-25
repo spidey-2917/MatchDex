@@ -431,10 +431,9 @@ class TradeItem(models.Model):
 
 
 class RateConfig(models.Model):
-    CATEGORIES = [("SPAWN", "Spawning"), ("PACK", "Packs"), ("PACK_PREMIUM", "Premium Pack")]
     MODES = [("RARITY", "By Rarity"), ("OVR", "By OVR Range")]
 
-    category = models.CharField(max_length=20, choices=CATEGORIES, unique=True)
+    category = models.CharField(max_length=50, unique=True, help_text="Category or unique slug for this rate config (e.g. PACK_SUMMER)")
     mode = models.CharField(max_length=10, choices=MODES, default="RARITY")
 
     class Meta:
@@ -442,7 +441,7 @@ class RateConfig(models.Model):
         verbose_name_plural = "Rate Configurations"
 
     def __str__(self):
-        return f"{self.get_category_display()} — {self.get_mode_display()}"
+        return f"{self.category} — {self.get_mode_display()}"
 
     def get_rates_summary(self):
         """Build a human-readable summary of active rates with percentages."""
@@ -560,3 +559,37 @@ class SBCRequirement(models.Model):
         
         cond_str = ", ".join(conditions) if conditions else "Any Card"
         return f"{self.quantity}x [{cond_str}]"
+
+
+class Pack(models.Model):
+    name = models.CharField(max_length=100, help_text="Display name of the pack")
+    code = models.CharField(max_length=50, unique=True, help_text="Unique slug for commands (e.g., 'summer', 'daily')")
+    cooldown_days = models.FloatField(default=1.0)
+    is_premium_only = models.BooleanField(default=False)
+    
+    CARD_TYPE_CHOICES = [("ANY", "Any")] + CardTemplate.CARD_TYPES
+    card_type_filter = models.CharField(max_length=20, choices=CARD_TYPE_CHOICES, default="ANY")
+    event_name_filter = models.CharField(max_length=100, blank=True, null=True, help_text="Require specific event name")
+    
+    rate_config_category = models.CharField(
+        max_length=50, 
+        blank=True, 
+        null=True,
+        help_text="The category string matching a RateConfig (e.g., PACK, PACK_PREMIUM, or PACK_CUSTOM)"
+    )
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class UserPack(models.Model):
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="packs")
+    pack = models.ForeignKey(Pack, on_delete=models.CASCADE)
+    stash_count = models.IntegerField(default=0, help_text="Number of packs the user has stashed (bypasses cooldown)")
+    last_opened_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ("user", "pack")
+
+    def __str__(self):
+        return f"{self.user.username} - {self.pack.name} ({self.stash_count})"

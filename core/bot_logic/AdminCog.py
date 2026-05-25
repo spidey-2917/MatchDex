@@ -63,6 +63,9 @@ class AdminCog(commands.Cog, name="Admin"):
     server_group = app_commands.Group(
         name="server", description="Manage admin servers", parent=admin_group
     )
+    packs_group = app_commands.Group(
+        name="packs", description="Manage user packs", parent=admin_group
+    )
 
     async def check_admin(self, interaction: discord.Interaction) -> bool:
         if not await self.bot.is_admin(interaction.user):
@@ -397,6 +400,57 @@ class AdminCog(commands.Cog, name="Admin"):
             msg += "\n…and more."
 
         await interaction.response.send_message(msg, ephemeral=True)
+
+    # ══════════════════════════════════════════════════════════
+    #  /admin packs
+    # ══════════════════════════════════════════════════════════
+
+    async def pack_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        from core.models import Pack
+        @sync_to_async
+        def get_choices():
+            qs = Pack.objects.all()
+            if current:
+                qs = qs.filter(name__icontains=current)
+            return list(qs[:25])
+        
+        packs = await get_choices()
+        return [app_commands.Choice(name=p.name, value=p.code) for p in packs]
+
+    @packs_group.command(name="add", description="Add packs to a user's stash")
+    @app_commands.autocomplete(pack_name=pack_autocomplete)
+    @app_commands.describe(pack_name="The code of the pack", count="Number of packs")
+    async def packs_add(
+        self,
+        interaction: discord.Interaction,
+        pack_name: str,
+        user: discord.Member,
+        count: int = 1,
+    ):
+        if not await self.check_admin(interaction):
+            return
+        
+        from core.models import Pack, UserPack, DiscordUser
+        pack_obj = await Pack.objects.filter(code=pack_name).afirst()
+        if not pack_obj:
+            return await interaction.response.send_message("Pack not found!", ephemeral=True)
+            
+        db_user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=user.id, defaults={"username": user.name}
+        )
+        
+        user_pack, _ = await UserPack.objects.aget_or_create(
+            user=db_user, pack=pack_obj
+        )
+        user_pack.stash_count += count
+        await user_pack.asave()
+        
+        await interaction.response.send_message(
+            f"✅ Added {count}x **{pack_obj.name}** to {user.mention}'s stash.",
+            ephemeral=False
+        )
 
     # ══════════════════════════════════════════════════════════
     #  /admin md

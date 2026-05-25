@@ -40,6 +40,7 @@ def load_lineup_cards(uid):
         "at1__template",
         "at2__template",
         "at3__template",
+        "at4__template",
         "sub1__template",
         "sub2__template",
         "sub3__template",
@@ -61,6 +62,7 @@ def load_lineup_cards(uid):
             "at1",
             "at2",
             "at3",
+            "at4",
         ]
         if getattr(lineup, s)
     ]
