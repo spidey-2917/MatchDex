@@ -82,10 +82,10 @@ class RateConfigAdmin(admin.ModelAdmin):
             # OVR mode defaults
             if config.category == "PACK_PREMIUM":
                 ovr_defaults = [
-                    (86, 88, 40.0),
-                    (89, 91, 30.0),
-                    (91, 93, 20.0),
-                    (94, 99, 10.0),
+                    (86, 87, 50.0),
+                    (87, 90, 30.0),
+                    (91, 92, 15.0),
+                    (93, 94, 5.0),
                 ]
             else:
                 ovr_defaults = [
