@@ -145,7 +145,7 @@ class SBCCog(commands.Cog, name="Squad Building Challenges"):
         def get_user_inventory():
             user, _ = DiscordUser.objects.get_or_create(discord_id=interaction.user.id, defaults={"username": interaction.user.name})
             cards = list(UserCard.objects.filter(owner=user).select_related("template").order_by("template__ovr"))
-            requirements = list(sbc.requirements.all())
+            requirements = list(sbc.requirements.select_related("specific_template").all())
             return user, cards, requirements
 
         user, inventory, requirements = await get_user_inventory()
@@ -246,7 +246,7 @@ class SBCCog(commands.Cog, name="Squad Building Challenges"):
             sbc = SBC.objects.get(id=sbc_id)
             user = DiscordUser.objects.get(discord_id=interaction.user.id)
             cards = list(UserCard.objects.filter(owner=user, card_id__in=selected_ids).select_related("template"))
-            requirements = list(sbc.requirements.all())
+            requirements = list(sbc.requirements.select_related("specific_template").all())
 
             # Validate that the selected cards actually fulfill all requirements perfectly
             avail = list(cards)
