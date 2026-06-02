@@ -547,7 +547,7 @@ class SBCRequirement(models.Model):
     def __str__(self):
         conditions = []
         if self.specific_template:
-            conditions.append(f"Template: {self.specific_template.name}")
+            conditions.append(f"Template: {self.specific_template.name} ({self.specific_template.ovr})")
         if self.min_ovr:
             conditions.append(f"Min OVR: {self.min_ovr}")
         if self.required_rarity:

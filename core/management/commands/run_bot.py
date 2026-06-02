@@ -207,10 +207,9 @@ class MatchdexBot(commands.AutoShardedBot):
         for guild_id in settings.admin_guild_ids:
             guild = self.get_guild(guild_id)
             if guild:
-                self.tree.copy_global_to(guild=guild)
                 admin_synced = await self.tree.sync(guild=guild)
                 log.info(
-                    "Synced %d admin and global commands to guild %s.",
+                    "Synced %d admin commands to guild %s.",
                     len(admin_synced),
                     guild_id,
                 )

@@ -209,8 +209,13 @@ class SpawningCog(commands.Cog, name="Spawning"):
         embed.set_footer(text=f"Rarity: {card.rarity} | Position: {card.position}")
 
         view = CatchView(card)
-        msg = await channel.send(file=file, embed=embed, view=view)
-        view.message = msg
+        try:
+            msg = await channel.send(file=file, embed=embed, view=view)
+            view.message = msg
+        except discord.Forbidden as e:
+            log.error(f"Failed to spawn card in guild {channel.guild.id} channel {channel.id} due to Missing Permissions: {e}")
+        except discord.HTTPException as e:
+            log.error(f"Failed to spawn card in guild {channel.guild.id} channel {channel.id} due to HTTP error: {e}")
 
 
 async def setup(bot):

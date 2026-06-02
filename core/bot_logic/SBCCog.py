@@ -178,7 +178,20 @@ class SBCCog(commands.Cog, name="Squad Building Challenges"):
             description=sbc.description or "Complete the requirements to earn the reward!",
             color=discord.Color.blue()
         )
-        embed.add_field(name="Requirements Check", value=missing_text, inline=False)
+        
+        # Split missing_text into chunks of max 1024 characters without breaking lines
+        lines = missing_text.splitlines()
+        chunk = ""
+        first_field = True
+        for line in lines:
+            if len(chunk) + len(line) + 2 > 1024:
+                embed.add_field(name="Requirements Check" if first_field else "Requirements Check (cont.)", value=chunk, inline=False)
+                chunk = line + "\n"
+                first_field = False
+            else:
+                chunk += line + "\n"
+        if chunk:
+            embed.add_field(name="Requirements Check" if first_field else "Requirements Check (cont.)", value=chunk, inline=False)
         
         @sync_to_async
         def get_reward_name():

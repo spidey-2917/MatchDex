@@ -735,8 +735,6 @@ class AdminCog(commands.Cog, name="Admin"):
         try:
             # Clear guild-specific tree
             self.bot.tree.clear_commands(guild=interaction.guild)
-            # Copy global commands to this guild tree
-            self.bot.tree.copy_global_to(guild=interaction.guild)
             # Re-add admin group if this is an admin guild
             if interaction.guild_id in settings.admin_guild_ids:
                 self.bot.tree.add_command(self.admin_group, guild=interaction.guild)
