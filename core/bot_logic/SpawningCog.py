@@ -112,7 +112,7 @@ class SpawningCog(commands.Cog, name="Spawning"):
         async for setting in ServerSettings.objects.filter(spawn_channel_id__isnull=False):
             self.enabled_guilds.add(setting.guild_id)
 
-    def cog_unload(self):
+    async def cog_unload(self) -> None:
         pass
 
     def _roll_threshold(self, guild_id: int) -> int:
@@ -153,7 +153,7 @@ class SpawningCog(commands.Cog, name="Spawning"):
             self.last_spawn_time[guild_id] = now
             return
 
-        last = self.last_spawn_time.get(guild_id)
+        last = self.last_spawn_time[guild_id]
         elapsed = now - last
         threshold = self._get_threshold(guild_id)
 

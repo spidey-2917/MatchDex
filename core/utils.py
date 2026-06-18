@@ -153,11 +153,26 @@ def get_fallback_rarities(rolled_rarity):
     return fallback_sequence
 
 
-def pick_random_card(category, card_type_filter=None):
+def pick_random_card(category, card_type_filter=None, event_name_filter=None, min_ovr_filter=None, max_ovr_filter=None):
     """
     Pick a random card based on the current drop rate configuration.
+
+    Optional filters:
+      - event_name_filter: restrict to a specific event_name on CardTemplate
+      - min_ovr_filter: minimum OVR (inclusive)
+      - max_ovr_filter: maximum OVR (inclusive)
     """
     mode, weights = get_drop_config(category)
+
+    def _apply_extra_filters(qs):
+        """Apply the caller-supplied event/OVR filters to a queryset."""
+        if event_name_filter:
+            qs = qs.filter(event_name__iexact=event_name_filter)
+        if min_ovr_filter is not None:
+            qs = qs.filter(ovr__gte=min_ovr_filter)
+        if max_ovr_filter is not None:
+            qs = qs.filter(ovr__lte=max_ovr_filter)
+        return qs
 
     # 1. Choose card type (BASE, ICON, EVENT)
     if card_type_filter:
@@ -181,7 +196,11 @@ def pick_random_card(category, card_type_filter=None):
         else:
             chosen_type = card_type_filter
     else:
-        chosen_type = random.choices(["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1)[0]
+        # If an event_name_filter is supplied, use EVENT type automatically
+        if event_name_filter:
+            chosen_type = "EVENT"
+        else:
+            chosen_type = random.choices(["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1)[0]
 
     # 2. Pick card based on mode
     spawnable_rarities = list(settings.rarity_weights.keys())
@@ -197,6 +216,7 @@ def pick_random_card(category, card_type_filter=None):
             candidate_qs = CardTemplate.objects.filter(
                 card_type=chosen_type, rarity=r_candidate
             ).filter(rarity__in=spawnable_rarities)
+            candidate_qs = _apply_extra_filters(candidate_qs)
             if candidate_qs.exists():
                 qs = candidate_qs
                 break
@@ -206,13 +226,15 @@ def pick_random_card(category, card_type_filter=None):
             fallback_qs = CardTemplate.objects.filter(
                 card_type=chosen_type, rarity__in=spawnable_rarities
             )
+            fallback_qs = _apply_extra_filters(fallback_qs)
             if fallback_qs.exists():
                 qs = fallback_qs
             else:
-                # Last resort: any BASE card with any spawnable rarity
+                # Second fallback: ignore card type filter but keep extra filters
                 last_resort_qs = CardTemplate.objects.filter(
-                    card_type="BASE", rarity__in=spawnable_rarities
+                    rarity__in=spawnable_rarities
                 )
+                last_resort_qs = _apply_extra_filters(last_resort_qs)
                 if last_resort_qs.exists():
                     qs = last_resort_qs
                 else:
@@ -230,18 +252,21 @@ def pick_random_card(category, card_type_filter=None):
             ovr__lte=max_ovr,
             rarity__in=spawnable_rarities,
         )
+        qs = _apply_extra_filters(qs)
         if not qs.exists():
             # First fallback: keep chosen_type but ignore OVR range
             fallback_qs = CardTemplate.objects.filter(
                 card_type=chosen_type, rarity__in=spawnable_rarities
             )
+            fallback_qs = _apply_extra_filters(fallback_qs)
             if fallback_qs.exists():
                 qs = fallback_qs
             else:
-                # Last resort: any BASE card
+                # Second fallback: ignore card type but keep extra filters
                 last_resort_qs = CardTemplate.objects.filter(
-                    card_type="BASE", rarity__in=spawnable_rarities
+                    rarity__in=spawnable_rarities
                 )
+                last_resort_qs = _apply_extra_filters(last_resort_qs)
                 if last_resort_qs.exists():
                     qs = last_resort_qs
                 else:

@@ -167,7 +167,7 @@ class TeamCog(commands.Cog, name="Teams"):
     # ─── /team_view ─────────────────────────────────────────────
     @app_commands.command(name="team_view", description="View a squad with details")
     async def team_view(
-        self, interaction: discord.Interaction, member: discord.Member = None
+        self, interaction: discord.Interaction, member: discord.Member | None = None
     ):
         await interaction.response.defer(ephemeral=False)
         target = member or interaction.user
@@ -179,7 +179,7 @@ class TeamCog(commands.Cog, name="Teams"):
         def get_lineup_data():
             lineup = Lineup.objects.filter(owner=user, is_active=True).first()
             if not lineup:
-                return None, None, None
+                return None, None, None, None
 
             formation_key = lineup.formation
             f_info = FORMATIONS.get(formation_key, FORMATIONS["433"])
@@ -217,7 +217,7 @@ class TeamCog(commands.Cog, name="Teams"):
 
         result = await get_lineup_data()
 
-        if not result[0]:
+        if result[0] is None or result[1] is None or result[2] is None or result[3] is None:
             await interaction.followup.send(
                 f"**{target.name}** doesn't have a squad yet!", ephemeral=False
             )

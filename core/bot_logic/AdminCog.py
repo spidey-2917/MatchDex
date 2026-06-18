@@ -79,25 +79,53 @@ class AdminCog(commands.Cog, name="Admin"):
     #  /admin spawn — replaces legacy /admin_spawn + /admin_spawn_card
     # ══════════════════════════════════════════════════════════
 
+    async def event_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for unique event names from CardTemplate."""
+        @sync_to_async
+        def get_events():
+            qs = CardTemplate.objects.values_list("event_name", flat=True).distinct()
+            if current:
+                qs = qs.filter(event_name__icontains=current)
+            return list(qs[:25])
+        
+        events = await get_events()
+        return [
+            app_commands.Choice(name=e, value=e)
+            for e in events if e
+        ]
+
     @spawn_group.command(
         name="random", description="Spawn catchable cards in this channel"
     )
-    @app_commands.describe(count="Number of cards to spawn (1-15)")
-    async def spawn_random(self, interaction: discord.Interaction, count: int = 5):
+    @app_commands.describe(
+        count="Number of cards to spawn (1-15)",
+        event="Filter spawns to a specific event (optional)"
+    )
+    @app_commands.autocomplete(event=event_autocomplete)
+    async def spawn_random(self, interaction: discord.Interaction, count: int = 5, event: str | None = None):
         if not await self.check_admin(interaction):
             return
 
+        if not interaction.channel or not isinstance(interaction.channel, discord.abc.Messageable):
+            await interaction.response.send_message("This command can only be used in a text channel.", ephemeral=True)
+            return
+
         count = max(1, min(count, 15))
+        event_label = f" (event: {event})" if event else ""
         await interaction.response.send_message(
-            f"Spawning {count} card(s)…", ephemeral=True
+            f"Spawning {count} card(s){event_label}…", ephemeral=True
         )
 
-        from core.utils import get_random_card_by_rarity, get_random_rarity
+        from core.utils import pick_random_card
 
         spawned = 0
         for _ in range(count):
-            rarity = get_random_rarity()
-            card = await sync_to_async(get_random_card_by_rarity)(rarity)
+            card = await sync_to_async(pick_random_card)(
+                "PACK",
+                event_name_filter=event,
+            )
             if not card:
                 continue
 
@@ -136,6 +164,10 @@ class AdminCog(commands.Cog, name="Admin"):
         event: str | None = None,
     ):
         if not await self.check_admin(interaction):
+            return
+
+        if not interaction.channel or not isinstance(interaction.channel, discord.abc.Messageable):
+            await interaction.response.send_message("This command can only be used in a text channel.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)

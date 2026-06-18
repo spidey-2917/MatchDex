@@ -43,15 +43,18 @@ class SBCAddSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        await self.view.add_selected_cards(interaction, self.values)
+        if isinstance(self.view, SBCAddView):
+            await self.view.add_selected_cards(interaction, self.values)
 
 
 class SBCAddView(CardListView):
-    def __init__(self, user_db, bot, sbc_id, valid_card_ids, required_total):
+    def __init__(self, user_db, bot, sbc_id, valid_card_ids, required_total, cog=None):
         super().__init__(user_db, "ovr", bot, reverse=False, ephemeral=True)
         self.sbc_id = sbc_id
         self.valid_card_ids = valid_card_ids
         self.required_total = required_total
+        self.cog = cog
+        self._submitting = False
 
     async def get_page_cards(self):
         @sync_to_async
@@ -84,15 +87,25 @@ class SBCAddView(CardListView):
 
         if selected_count >= self.required_total:
             submit_btn = discord.ui.Button(label="Submit SBC", style=discord.ButtonStyle.success, row=1)
-            async def cb_submit(it):
-                await self.cog.execute_sbc(it, self.sbc_id)
+            async def cb_submit(interaction_submit: discord.Interaction):
+                # Concurrency guard
+                if self._submitting:
+                    return await interaction_submit.response.send_message(
+                        "Already submitting…", ephemeral=True
+                    )
+                self._submitting = True
+                try:
+                    if self.cog:
+                        await self.cog.execute_sbc(interaction_submit, self.sbc_id)
+                finally:
+                    self._submitting = False
             submit_btn.callback = cb_submit
             self.add_item(submit_btn)
         else:
             cancel_btn = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.danger, row=1)
-            async def cb_cancel(it):
-                ACTIVE_SBC_SESSIONS.pop(it.user.id, None)
-                await it.response.edit_message(content="🛑 SBC Cancelled.", view=None)
+            async def cb_cancel(interaction_cancel: discord.Interaction):
+                ACTIVE_SBC_SESSIONS.pop(interaction_cancel.user.id, None)
+                await interaction_cancel.response.edit_message(content="🛑 SBC Cancelled.", view=None)
                 self.stop()
             cancel_btn.callback = cb_cancel
             self.add_item(cancel_btn)
@@ -116,6 +129,7 @@ class SBCAddView(CardListView):
 class SBCCog(commands.Cog, name="Squad Building Challenges"):
     def __init__(self, bot):
         self.bot = bot
+        self._autofill_locks: set[int] = set()  # user IDs currently auto-filling
 
     async def sbc_autocomplete(self, interaction: discord.Interaction, current: str):
         @sync_to_async
@@ -193,12 +207,25 @@ class SBCCog(commands.Cog, name="Squad Building Challenges"):
         if chunk:
             embed.add_field(name="Requirements Check" if first_field else "Requirements Check (cont.)", value=chunk, inline=False)
         
+        # Build reward display
         @sync_to_async
-        def get_reward_name():
-            return sbc.reward_card.name
+        def get_reward_info():
+            reward_text = ""
+            if sbc.reward_card_id:
+                reward_text += f"🎁 {sbc.reward_card.name}"
+            if sbc.reward_pack_id:
+                pack_name = sbc.reward_pack.name
+                pack_count = sbc.reward_pack_count
+                if reward_text:
+                    reward_text += f"\n📦 {pack_count}x {pack_name} pack(s)"
+                else:
+                    reward_text = f"📦 {pack_count}x {pack_name} pack(s)"
+            if not reward_text:
+                reward_text = "No reward configured"
+            return reward_text
 
-        reward_name = await get_reward_name()
-        embed.add_field(name="Reward", value=f"🎁 {reward_name}", inline=False)
+        reward_text = await get_reward_info()
+        embed.add_field(name="Reward", value=reward_text, inline=False)
 
         if not fulfilled:
             return await interaction.followup.send(embed=embed, ephemeral=True)
@@ -212,32 +239,40 @@ class SBCCog(commands.Cog, name="Squad Building Challenges"):
         view = discord.ui.View()
         
         start_btn = discord.ui.Button(label="Manual Selection", style=discord.ButtonStyle.primary)
-        async def cb_start(it):
-            ACTIVE_SBC_SESSIONS[it.user.id]["selected_cards"] = []
+        async def cb_start(interaction_start: discord.Interaction):
+            ACTIVE_SBC_SESSIONS[interaction_start.user.id]["selected_cards"] = []
             required_total = sum(r.quantity for r in requirements)
-            list_view = SBCAddView(user, self.bot, sbc.id, list(valid_card_ids), required_total)
-            list_view.cog = self
-            await list_view.update_view(it)
+            list_view = SBCAddView(user, self.bot, sbc.id, list(valid_card_ids), required_total, cog=self)
+            await list_view.update_view(interaction_start)
         start_btn.callback = cb_start
         view.add_item(start_btn)
 
         autofill_btn = discord.ui.Button(label="Auto-Fill & Submit", style=discord.ButtonStyle.success)
-        async def cb_autofill(it):
-            await it.response.defer(ephemeral=True)
-            # Greedy auto-fill: lowest OVR first
-            to_submit = []
-            avail = list(inventory)
-            for req in requirements:
-                needed = req.quantity
-                for card in list(avail):
-                    if needed <= 0: break
-                    if meets_requirement(card, req):
-                        to_submit.append(card.card_id)
-                        avail.remove(card)
-                        needed -= 1
+        async def cb_autofill(interaction_autofill: discord.Interaction):
+            # Concurrency guard
+            if interaction_autofill.user.id in self._autofill_locks:
+                return await interaction_autofill.response.send_message(
+                    "Already processing your SBC…", ephemeral=True
+                )
+            self._autofill_locks.add(interaction_autofill.user.id)
+            try:
+                await interaction_autofill.response.defer(ephemeral=True)
+                # Greedy auto-fill: lowest OVR first
+                to_submit = []
+                avail = list(inventory)
+                for req in requirements:
+                    needed = req.quantity
+                    for card in list(avail):
+                        if needed <= 0: break
+                        if meets_requirement(card, req):
+                            to_submit.append(card.card_id)
+                            avail.remove(card)
+                            needed -= 1
 
-            ACTIVE_SBC_SESSIONS[it.user.id]["selected_cards"] = to_submit
-            await self.execute_sbc(it, sbc.id)
+                ACTIVE_SBC_SESSIONS[interaction_autofill.user.id]["selected_cards"] = to_submit
+                await self.execute_sbc(interaction_autofill, sbc.id)
+            finally:
+                self._autofill_locks.discard(interaction_autofill.user.id)
         autofill_btn.callback = cb_autofill
         view.add_item(autofill_btn)
 
@@ -256,7 +291,7 @@ class SBCCog(commands.Cog, name="Squad Building Challenges"):
 
         @sync_to_async
         def validate_and_execute():
-            sbc = SBC.objects.get(id=sbc_id)
+            sbc = SBC.objects.select_related("reward_card", "reward_pack").get(id=sbc_id)
             user = DiscordUser.objects.get(discord_id=interaction.user.id)
             cards = list(UserCard.objects.filter(owner=user, card_id__in=selected_ids).select_related("template"))
             requirements = list(sbc.requirements.select_related("specific_template").all())
@@ -271,41 +306,59 @@ class SBCCog(commands.Cog, name="Squad Building Challenges"):
                         avail.remove(card)
                         needed -= 1
                 if needed > 0:
-                    return False, f"Your selected cards do not fulfill the requirement: {req}"
+                    return False, f"Your selected cards do not fulfill the requirement: {req}", None
 
             # Ensure we didn't submit too many or too few
             if len(cards) != sum(r.quantity for r in requirements):
-                return False, "You selected an incorrect number of cards."
+                return False, "You selected an incorrect number of cards.", None
 
-            # Execute
+            # Execute — delete submitted cards
             for c in cards:
                 c.delete()
 
-            # Create reward
-            reward = UserCard.objects.create(owner=user, template=sbc.reward_card)
-            return True, reward
+            # Create reward card if configured
+            reward_card = None
+            if sbc.reward_card_id:
+                reward_card = UserCard.objects.create(owner=user, template=sbc.reward_card)
+
+            return True, sbc, reward_card
 
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
-        success, result = await validate_and_execute()
+        success, result, reward_card = await validate_and_execute()
         if not success:
             await interaction.followup.send(f"❌ SBC Failed: {result}", ephemeral=True)
             return
 
-        # Clear lineups for deleted cards
-        for cid in selected_ids:
-            # We need the db IDs, but the query above deleted them. We can just clear all lineups involving these cards
-            # Actually clear_card_from_lineups takes the UserCard.id which we deleted...
-            pass # Since they are cascading, lineup slots should be set to null if on_delete=SET_NULL was used! Wait!
-        
+        sbc_obj = result  # This is the SBC object on success
+
+        # Handle pack reward if configured
+        pack_reward_text = ""
+        if sbc_obj.reward_pack_id:
+            from core.models import UserPack
+            user_db = await DiscordUser.objects.aget(discord_id=interaction.user.id)
+            user_pack, _ = await UserPack.objects.aget_or_create(
+                user=user_db, pack_id=sbc_obj.reward_pack_id
+            )
+            user_pack.stash_count += sbc_obj.reward_pack_count
+            await user_pack.asave()
+            pack_name = sbc_obj.reward_pack.name
+            pack_reward_text = f"\n📦 **{sbc_obj.reward_pack_count}x {pack_name}** added to your pack wallet!"
+
         ACTIVE_SBC_SESSIONS.pop(interaction.user.id, None)
 
-        reward_card = result
-        await interaction.followup.send(
-            f"🎉 **SBC Completed!** You submitted your cards and received **{reward_card.template.name} ({reward_card.template.ovr})**! Check your inventory.",
-            ephemeral=True
-        )
+        # Build completion message
+        parts = ["🎉 **SBC Completed!** You submitted your cards"]
+        if reward_card:
+            parts.append(f" and received **{reward_card.template.name} ({reward_card.template.ovr})**!")
+        else:
+            parts.append("!")
+        if pack_reward_text:
+            parts.append(pack_reward_text)
+        parts.append("\nCheck your inventory.")
+
+        await interaction.followup.send("".join(parts), ephemeral=True)
 
 
 async def setup(bot):

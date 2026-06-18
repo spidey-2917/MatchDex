@@ -21,6 +21,9 @@ class PackCog(commands.Cog, name="Packs"):
         pack_type,
         card_filter_type=None,
         cooldown_days=None,
+        event_name_filter=None,
+        min_ovr_filter=None,
+        max_ovr_filter=None,
     ):
         user, _ = await DiscordUser.objects.aget_or_create(
             discord_id=interaction.user.id, defaults={"username": interaction.user.name}
@@ -47,18 +50,30 @@ class PackCog(commands.Cog, name="Packs"):
                 remaining = (last_redeem + timedelta(days=cooldown_days)) - now
                 hours, remainder = divmod(int(remaining.total_seconds()), 3600)
                 minutes, _ = divmod(remainder, 60)
-                await interaction.response.send_message(
-                    f"You need to wait **{hours}h {minutes}m** before opening another {pack_type} pack!",
-                    ephemeral=True,
-                )
+                msg = f"You need to wait **{hours}h {minutes}m** before opening another {pack_type} pack!"
+                if interaction.response.is_done():
+                    await interaction.followup.send(msg, ephemeral=True)
+                else:
+                    await interaction.response.send_message(msg, ephemeral=True)
                 return
 
-        await interaction.response.defer()
+        if not interaction.response.is_done():
+            await interaction.response.defer()
 
         # Pick random card based on configuration
         from core.utils import pick_random_card
         category = "PACK_PREMIUM" if pack_type == "premium" else "PACK"
-        card = await sync_to_async(pick_random_card)(category, card_type_filter=card_filter_type)
+        # Use the pack's rate_config_category if available
+        if pack_obj and pack_obj.rate_config_category:
+            category = pack_obj.rate_config_category
+
+        card = await sync_to_async(pick_random_card)(
+            category,
+            card_type_filter=card_filter_type,
+            event_name_filter=event_name_filter,
+            min_ovr_filter=min_ovr_filter,
+            max_ovr_filter=max_ovr_filter,
+        )
 
         if not card:
             await interaction.followup.send(
@@ -281,7 +296,7 @@ class PackCog(commands.Cog, name="Packs"):
     )
     @app_commands.autocomplete(pack_name=pack_autocomplete)
     async def pack_open(self, interaction: discord.Interaction, pack_name: str):
-        from core.models import Pack
+        from core.models import Pack, UserPack
         pack_obj = await Pack.objects.filter(code=pack_name).afirst()
         if not pack_obj:
             return await interaction.response.send_message("Pack not found!", ephemeral=True)
@@ -289,6 +304,13 @@ class PackCog(commands.Cog, name="Packs"):
         user, _ = await DiscordUser.objects.aget_or_create(
             discord_id=interaction.user.id, defaults={"username": interaction.user.name}
         )
+
+        # Ensure the user has the pack in their wallet to prevent infinite openings
+        user_pack = await UserPack.objects.filter(user=user, pack=pack_obj).afirst()
+        if not user_pack or user_pack.stash_count <= 0:
+            return await interaction.response.send_message(
+                "You don't have any of these packs in your wallet!", ephemeral=True
+            )
         
         if pack_obj.is_premium_only and not user.is_premium:
             # Check for premium role
@@ -317,10 +339,109 @@ class PackCog(commands.Cog, name="Packs"):
             interaction, 
             pack_type=pack_obj.code, 
             card_filter_type=c_filter, 
-            cooldown_days=pack_obj.cooldown_days
+            cooldown_days=pack_obj.cooldown_days,
+            event_name_filter=pack_obj.event_name_filter or None,
+            min_ovr_filter=pack_obj.min_ovr_filter,
+            max_ovr_filter=pack_obj.max_ovr_filter,
         )
+
+    # ══════════════════════════════════════════════════════════
+    #  /pack_wallet — View and open stashed packs
+    # ══════════════════════════════════════════════════════════
+
+    @app_commands.command(
+        name="pack_wallet", description="View your stashed packs and open them"
+    )
+    async def pack_wallet(self, interaction: discord.Interaction):
+        from core.models import UserPack
+
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def get_stashed_packs():
+            return list(
+                UserPack.objects.filter(user=user, stash_count__gt=0)
+                .select_related("pack")
+                .order_by("-stash_count")
+            )
+
+        stashed = await get_stashed_packs()
+
+        if not stashed:
+            return await interaction.response.send_message(
+                "📦 Your pack wallet is empty! Earn packs through SBCs or admin grants.",
+                ephemeral=True,
+            )
+
+        embed = discord.Embed(
+            title="📦 Pack Wallet",
+            description="Your stashed packs. Select one to open it!",
+            color=discord.Color.blue(),
+        )
+        for up in stashed:
+            embed.add_field(
+                name=f"{up.pack.name}",
+                value=f"**{up.stash_count}x** available",
+                inline=True,
+            )
+
+        # Build select menu
+        options = [
+            discord.SelectOption(
+                label=f"{up.pack.name} ({up.stash_count}x)",
+                description=f"Open one {up.pack.name} pack",
+                value=up.pack.code,
+            )
+            for up in stashed[:25]
+        ]
+
+        select = discord.ui.Select(
+            placeholder="Choose a pack to open...",
+            options=options,
+        )
+
+        cog_ref = self
+
+        async def on_select(select_interaction: discord.Interaction):
+            pack_code = select.values[0]
+            from core.models import Pack
+            pack_obj = await Pack.objects.filter(code=pack_code).afirst()
+            if not pack_obj:
+                return await select_interaction.response.send_message("Pack not found!", ephemeral=True)
+
+            # Check stash
+            user_pack = await UserPack.objects.filter(user=user, pack=pack_obj, stash_count__gt=0).afirst()
+            if not user_pack:
+                return await select_interaction.response.send_message(
+                    "You don't have any of these packs left!", ephemeral=True
+                )
+
+            # Card type filter logic
+            c_filter = None
+            if pack_obj.card_type_filter != "ANY":
+                c_filter = pack_obj.card_type_filter
+            if pack_obj.event_name_filter:
+                c_filter = "EVENT"
+
+            await cog_ref.open_pack(
+                select_interaction,
+                pack_type=pack_obj.code,
+                card_filter_type=c_filter,
+                cooldown_days=None,  # Stashed packs bypass cooldown
+                event_name_filter=pack_obj.event_name_filter or None,
+                min_ovr_filter=pack_obj.min_ovr_filter,
+                max_ovr_filter=pack_obj.max_ovr_filter,
+            )
+
+        select.callback = on_select
+
+        view = discord.ui.View(timeout=120)
+        view.add_item(select)
+
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 async def setup(bot):
     await bot.add_cog(PackCog(bot))
-

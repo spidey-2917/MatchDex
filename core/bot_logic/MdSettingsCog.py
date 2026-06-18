@@ -96,10 +96,11 @@ class ConfirmGiftView(discord.ui.View):
         )
 
         # Send a PUBLIC message so everyone can see the gift
-        await interaction.channel.send(
-            f"🎁 **{interaction.user.mention}** gave **{self.card.template.display_name}** "
-            f"(`#{self.card.card_id}`) to {self.recipient.mention}!"
-        )
+        if interaction.channel and isinstance(interaction.channel, discord.abc.Messageable):
+            await interaction.channel.send(
+                f"🎁 **{interaction.user.mention}** gave **{self.card.template.display_name}** "
+                f"(`#{self.card.card_id}`) to {self.recipient.mention}!"
+            )
         self.stop()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
@@ -265,7 +266,7 @@ class MdSettingsCog(commands.Cog, name="Settings"):
             app_commands.Choice(name="Catch Date (Newest)", value="date"),
         ]
     )
-    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False, user: discord.Member = None):
+    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False, user: discord.Member | None = None):
         # Determine target user
         target_member = user or interaction.user
         target_db, _ = await DiscordUser.objects.aget_or_create(

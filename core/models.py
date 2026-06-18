@@ -1,15 +1,27 @@
 import uuid
+import typing
 
 from django.db import models
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 
 
+class TypedModel(models.Model):
+    objects = models.Manager()
+
+    if typing.TYPE_CHECKING:
+        from django.core.exceptions import ObjectDoesNotExist
+        DoesNotExist: type[ObjectDoesNotExist]
+
+    class Meta:
+        abstract = True
+
+
 def generate_short_id():
     return "TEMP"
 
 
-class DiscordUser(models.Model):
+class DiscordUser(TypedModel):
     discord_id = models.BigIntegerField(unique=True, primary_key=True)
     username = models.CharField(max_length=100, blank=True, null=True)
     points = models.IntegerField(default=0)
@@ -33,7 +45,7 @@ class DiscordUser(models.Model):
         return f"{self.username} ({self.discord_id})"
 
 
-class PremiumRole(models.Model):
+class PremiumRole(TypedModel):
     """Discord role IDs that automatically grant premium access to /pack_premium."""
     role_id = models.BigIntegerField(unique=True)
     label = models.CharField(
@@ -46,7 +58,7 @@ class PremiumRole(models.Model):
         return f"{self.label or 'Role'} ({self.role_id})"
 
 
-class CardTemplate(models.Model):
+class CardTemplate(TypedModel):
     CARD_TYPES = [
         ("BASE", "Base Card"),
         ("ICON", "Icon Card"),
@@ -114,7 +126,7 @@ def update_ovr_and_rarity(sender, instance, **kwargs):
         instance.ovr = max(instance.attack_stat, instance.defence_stat)
 
 
-class UserCard(models.Model):
+class UserCard(TypedModel):
     card_id = models.CharField(
         max_length=8, unique=True, default=generate_short_id, editable=False
     )
@@ -143,7 +155,7 @@ class UserCard(models.Model):
         return f"[{self.card_id}] {self.owner.username}'s {self.template.name}"
 
 
-class FavouriteCard(models.Model):
+class FavouriteCard(TypedModel):
     owner = models.ForeignKey(
         DiscordUser, on_delete=models.CASCADE, related_name="favourites"
     )
@@ -159,7 +171,7 @@ class FavouriteCard(models.Model):
         return f"{self.owner.username} ❤️ {self.card.template.name}"
 
 
-class Logo(models.Model):
+class Logo(TypedModel):
     RARITIES = [("RARE", "Rare"), ("EPIC", "Epic"), ("LEGENDARY", "Legendary")]
     name = models.CharField(max_length=100)
     rarity = models.CharField(max_length=10, choices=RARITIES)
@@ -169,14 +181,14 @@ class Logo(models.Model):
         return f"{self.name} ({self.rarity} +{self.bonus})"
 
 
-class UserLogo(models.Model):
+class UserLogo(TypedModel):
     owner = models.OneToOneField(
         DiscordUser, on_delete=models.CASCADE, related_name="equipped_logo"
     )
     logo = models.ForeignKey(Logo, on_delete=models.CASCADE)
 
 
-class Lineup(models.Model):
+class Lineup(TypedModel):
     owner = models.ForeignKey(DiscordUser, on_delete=models.CASCADE)
     name = models.CharField(max_length=50, default="Lineup 1")
     is_active = models.BooleanField(default=False)
@@ -315,7 +327,7 @@ class Lineup(models.Model):
     )
 
 
-class PromoCode(models.Model):
+class PromoCode(TypedModel):
     REWARD_TYPES = [
         ("POINTS", "Points"),
         ("PACK_DAILY", "Daily Pack (Base)"),
@@ -343,7 +355,7 @@ class PromoCode(models.Model):
         return self.code
 
 
-class PromoCodeRedemption(models.Model):
+class PromoCodeRedemption(TypedModel):
     """Tracks which users have redeemed which promo codes — one redemption per user per code."""
     user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="promo_redemptions")
     promo_code = models.ForeignKey(PromoCode, on_delete=models.CASCADE, related_name="redemptions")
@@ -356,7 +368,7 @@ class PromoCodeRedemption(models.Model):
         return f"{self.user.username} redeemed {self.promo_code.code}"
 
 
-class ServerSettings(models.Model):
+class ServerSettings(TypedModel):
     guild_id = models.BigIntegerField(unique=True)
     spawn_channel_id = models.BigIntegerField(null=True, blank=True)
     catch_log_channel_id = models.BigIntegerField(null=True, blank=True)
@@ -366,7 +378,7 @@ class ServerSettings(models.Model):
         return f"Server {self.guild_id}"
 
 
-class Blacklist(models.Model):
+class Blacklist(TypedModel):
     TYPES = [("USER", "User"), ("GUILD", "Guild")]
     target_id = models.BigIntegerField()
     type = models.CharField(max_length=5, choices=TYPES)
@@ -380,7 +392,7 @@ class Blacklist(models.Model):
         return f"{self.type} {self.target_id} — {self.reason}"
 
 
-class CommandLog(models.Model):
+class CommandLog(TypedModel):
     guild_id = models.BigIntegerField()
     user_id = models.BigIntegerField()
     command_name = models.CharField(max_length=100)
@@ -390,7 +402,7 @@ class CommandLog(models.Model):
         return f"{self.user_id} used /{self.command_name} in {self.guild_id}"
 
 
-class Trade(models.Model):
+class Trade(TypedModel):
     initiator = models.ForeignKey(
         DiscordUser, on_delete=models.CASCADE, related_name="trades_initiated"
     )
@@ -416,7 +428,7 @@ class Trade(models.Model):
         return f"Trade between {self.initiator.username} and {self.receiver.username} - {self.status}"
 
 
-class TradeItem(models.Model):
+class TradeItem(TypedModel):
     trade = models.ForeignKey(Trade, on_delete=models.CASCADE, related_name="items")
     card = models.ForeignKey(UserCard, on_delete=models.CASCADE)
     sender = models.ForeignKey(
@@ -430,7 +442,7 @@ class TradeItem(models.Model):
         return f"{self.card.template.name} sent by {self.sender.username}"
 
 
-class RateConfig(models.Model):
+class RateConfig(TypedModel):
     MODES = [("RARITY", "By Rarity"), ("OVR", "By OVR Range")]
 
     category = models.CharField(max_length=50, unique=True, help_text="Category or unique slug for this rate config (e.g. PACK_SUMMER)")
@@ -461,7 +473,7 @@ class RateConfig(models.Model):
         return " | ".join(parts)
 
 
-class SpawnRate(models.Model):
+class SpawnRate(TypedModel):
     config = models.ForeignKey(
         RateConfig, on_delete=models.CASCADE, related_name="rates"
     )
@@ -514,11 +526,22 @@ class SpawnRate(models.Model):
         return f"{(self.weight / total) * 100:.1f}%"
 
 
-class SBC(models.Model):
+class SBC(TypedModel):
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
     reward_card = models.ForeignKey(
-        CardTemplate, on_delete=models.CASCADE, related_name="sbc_rewards"
+        CardTemplate, on_delete=models.CASCADE, related_name="sbc_rewards",
+        blank=True, null=True,
+        help_text="Specific card reward (leave blank if rewarding a pack instead)"
+    )
+    reward_pack = models.ForeignKey(
+        'Pack', on_delete=models.SET_NULL,
+        blank=True, null=True, related_name="sbc_rewards",
+        help_text="Reward pack to stash (leave blank if rewarding a card instead)"
+    )
+    reward_pack_count = models.IntegerField(
+        default=1,
+        help_text="Number of packs to stash as reward"
     )
     is_active = models.BooleanField(default=True)
     end_date = models.DateTimeField(blank=True, null=True)
@@ -527,7 +550,7 @@ class SBC(models.Model):
         return f"{self.name} (Active: {self.is_active})"
 
 
-class SBCRequirement(models.Model):
+class SBCRequirement(TypedModel):
     sbc = models.ForeignKey(SBC, on_delete=models.CASCADE, related_name="requirements")
     quantity = models.IntegerField(default=1)
 
@@ -561,7 +584,7 @@ class SBCRequirement(models.Model):
         return f"{self.quantity}x [{cond_str}]"
 
 
-class Pack(models.Model):
+class Pack(TypedModel):
     name = models.CharField(max_length=100, help_text="Display name of the pack")
     code = models.CharField(max_length=50, unique=True, help_text="Unique slug for commands (e.g., 'summer', 'daily')")
     cooldown_days = models.FloatField(default=1.0)
@@ -570,6 +593,14 @@ class Pack(models.Model):
     CARD_TYPE_CHOICES = [("ANY", "Any")] + CardTemplate.CARD_TYPES
     card_type_filter = models.CharField(max_length=20, choices=CARD_TYPE_CHOICES, default="ANY")
     event_name_filter = models.CharField(max_length=100, blank=True, null=True, help_text="Require specific event name")
+    min_ovr_filter = models.IntegerField(
+        blank=True, null=True,
+        help_text="Minimum OVR for cards in this pack (inclusive)"
+    )
+    max_ovr_filter = models.IntegerField(
+        blank=True, null=True,
+        help_text="Maximum OVR for cards in this pack (inclusive)"
+    )
     
     rate_config_category = models.CharField(
         max_length=50, 
@@ -582,7 +613,7 @@ class Pack(models.Model):
         return f"{self.name} ({self.code})"
 
 
-class UserPack(models.Model):
+class UserPack(TypedModel):
     user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="packs")
     pack = models.ForeignKey(Pack, on_delete=models.CASCADE)
     stash_count = models.IntegerField(default=0, help_text="Number of packs the user has stashed (bypasses cooldown)")

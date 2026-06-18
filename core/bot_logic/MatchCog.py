@@ -88,6 +88,7 @@ class AcceptView(discord.ui.View):
     def __init__(self, p1, p2, cog):
         super().__init__(timeout=60)
         self.p1, self.p2, self.cog = p1, p2, cog
+        self._processing = False
 
     @discord.ui.button(label="Accept Match", style=discord.ButtonStyle.success)
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -95,6 +96,11 @@ class AcceptView(discord.ui.View):
             return await interaction.response.send_message(
                 "Only the challenged player can accept!", ephemeral=True
             )
+        if self._processing:
+            return await interaction.response.send_message(
+                "Already processing…", ephemeral=True
+            )
+        self._processing = True
         self.stop()
         await interaction.response.defer()
         await self.cog.start_match(interaction, self.p1, self.p2)
@@ -129,7 +135,8 @@ class RoleView(discord.ui.View):
         self.stop()
         # Disable buttons on the public message so nobody else can click
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, (discord.ui.Button, discord.ui.Select)):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         await self._pick_card(interaction, is_attack=True)
 
@@ -146,7 +153,8 @@ class RoleView(discord.ui.View):
         self.used = True
         self.stop()
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, (discord.ui.Button, discord.ui.Select)):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         await self._pick_card(interaction, is_attack=False)
 
@@ -317,7 +325,8 @@ class ResponderView(discord.ui.View):
         self.stop()
         # Disable buttons so nobody else can click
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, (discord.ui.Button, discord.ui.Select)):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
 
         m = ACTIVE_MATCHES.get(self.match_id)

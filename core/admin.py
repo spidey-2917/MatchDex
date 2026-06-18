@@ -1,3 +1,4 @@
+from typing import Sequence
 from django.contrib import admin
 from django.utils.html import format_html
 
@@ -35,23 +36,21 @@ class SpawnRateInline(admin.TabularInline):
     fields = ("rarity", "min_ovr", "max_ovr", "weight", "get_percentage")
     readonly_fields = ("get_percentage",)
 
+    @admin.display(description="Effective %")
     def get_percentage(self, obj):
         if obj.pk is None:
             return "—"
         return obj.percentage
 
-    get_percentage.short_description = "Effective %"
-
 
 @admin.register(RateConfig)
 class RateConfigAdmin(admin.ModelAdmin):
-    list_display = ("category", "mode", "rates_summary")
-    inlines = [SpawnRateInline]
+    list_display: Sequence[str] = ("category", "mode", "rates_summary")
+    inlines: Sequence[type] = [SpawnRateInline]
 
+    @admin.display(description="Current Rates")
     def rates_summary(self, obj):
         return obj.get_rates_summary()
-
-    rates_summary.short_description = "Current Rates"
 
     def save_model(self, request, obj, form, change):
         """Auto-populate default rates when creating a new config or switching modes."""
@@ -108,7 +107,7 @@ class RateConfigAdmin(admin.ModelAdmin):
 
 @admin.register(DiscordUser)
 class DiscordUserAdmin(admin.ModelAdmin):
-    list_display = (
+    list_display: Sequence[str] = (
         "discord_id",
         "username",
         "points",
@@ -151,6 +150,7 @@ class DiscordUserAdmin(admin.ModelAdmin):
         }),
     )
 
+    @admin.display(description="Completed Trades")
     def get_trade_count(self, obj):
         from django.db.models import Q
         count = Trade.objects.filter(
@@ -158,12 +158,12 @@ class DiscordUserAdmin(admin.ModelAdmin):
             status="COMPLETED"
         ).count()
         return count
-    get_trade_count.short_description = "Completed Trades"
 
+    @admin.display(description="Cards Caught (not traded)")
     def get_catch_count(self, obj):
         return UserCard.objects.filter(owner=obj, traded_by__isnull=True).count()
-    get_catch_count.short_description = "Cards Caught (not traded)"
 
+    @admin.display(description="Packs Opened")
     def get_pack_opens(self, obj):
         pack_commands = ["pack_daily", "pack_weekly", "pack_event", "pack_premium", "pack_booster"]
         count = CommandLog.objects.filter(
@@ -171,16 +171,16 @@ class DiscordUserAdmin(admin.ModelAdmin):
             command_name__in=pack_commands,
         ).count()
         return count
-    get_pack_opens.short_description = "Packs Opened"
 
+    @admin.display(description="Wagers/Bets")
     def get_bet_count(self, obj):
         count = CommandLog.objects.filter(
             user_id=obj.discord_id,
             command_name__in=["wager challenge", "wager"],
         ).count()
         return count
-    get_bet_count.short_description = "Wagers/Bets"
 
+    @admin.display(description="Quick Summary")
     def get_activity_summary(self, obj):
         trades = self.get_trade_count(obj)
         catches = self.get_catch_count(obj)
@@ -191,61 +191,60 @@ class DiscordUserAdmin(admin.ModelAdmin):
             "<strong>Packs:</strong> {} | <strong>Bets:</strong> {}",
             trades, catches, packs, bets
         )
-    get_activity_summary.short_description = "Quick Summary"
 
 
 @admin.register(CardTemplate)
 class CardTemplateAdmin(admin.ModelAdmin):
-    list_display = ("name", "ovr", "rarity", "position", "card_type", "event_name")
-    list_filter = ("rarity", "card_type", "position", "event_name")
-    search_fields = ("name", "club", "event_name")
-    readonly_fields = ()
+    list_display: Sequence[str] = ("name", "ovr", "rarity", "position", "card_type", "event_name")
+    list_filter: Sequence[str] = ("rarity", "card_type", "position", "event_name")
+    search_fields: Sequence[str] = ("name", "club", "event_name")
+    readonly_fields: Sequence[str] = ()
 
 
 @admin.register(UserCard)
 class UserCardAdmin(admin.ModelAdmin):
-    list_display = ("owner", "template", "caught_at")
-    list_filter = ("caught_at",)
-    search_fields = ("owner__username", "template__name")
+    list_display: Sequence[str] = ("owner", "template", "caught_at")
+    list_filter: Sequence[str] = ("caught_at",)
+    search_fields: Sequence[str] = ("owner__username", "template__name")
 
 
 @admin.register(FavouriteCard)
 class FavouriteCardAdmin(admin.ModelAdmin):
-    list_display = ("owner", "card", "created_at")
-    search_fields = ("owner__username",)
+    list_display: Sequence[str] = ("owner", "card", "created_at")
+    search_fields: Sequence[str] = ("owner__username",)
 
 
 @admin.register(Logo)
 class LogoAdmin(admin.ModelAdmin):
-    list_display = ("name", "rarity", "bonus")
+    list_display: Sequence[str] = ("name", "rarity", "bonus")
 
 
 @admin.register(UserLogo)
 class UserLogoAdmin(admin.ModelAdmin):
-    list_display = ("owner", "logo")
+    list_display: Sequence[str] = ("owner", "logo")
 
 
 @admin.register(Lineup)
 class LineupAdmin(admin.ModelAdmin):
-    list_display = ("owner", "name", "formation", "is_active")
+    list_display: Sequence[str] = ("owner", "name", "formation", "is_active")
 
 
 @admin.register(PromoCode)
 class PromoCodeAdmin(admin.ModelAdmin):
-    list_display = ("code", "reward_type", "uses", "max_uses", "expires_at")
-    autocomplete_fields = ["reward_card"]
+    list_display: Sequence[str] = ("code", "reward_type", "uses", "max_uses", "expires_at")
+    autocomplete_fields: Sequence[str] = ["reward_card"]
 
 
 @admin.register(PromoCodeRedemption)
 class PromoCodeRedemptionAdmin(admin.ModelAdmin):
-    list_display = ("user", "promo_code", "redeemed_at")
-    list_filter = ("redeemed_at",)
-    search_fields = ("user__username", "promo_code__code")
+    list_display: Sequence[str] = ("user", "promo_code", "redeemed_at")
+    list_filter: Sequence[str] = ("redeemed_at",)
+    search_fields: Sequence[str] = ("user__username", "promo_code__code")
 
 
 @admin.register(ServerSettings)
 class ServerSettingsAdmin(admin.ModelAdmin):
-    list_display = (
+    list_display: Sequence[str] = (
         "guild_id",
         "spawn_channel_id",
         "catch_log_channel_id",
@@ -255,47 +254,47 @@ class ServerSettingsAdmin(admin.ModelAdmin):
 
 @admin.register(Blacklist)
 class BlacklistAdmin(admin.ModelAdmin):
-    list_display = ("type", "target_id", "reason", "created_at")
-    list_filter = ("type", "created_at")
-    search_fields = ("target_id", "reason")
+    list_display: Sequence[str] = ("type", "target_id", "reason", "created_at")
+    list_filter: Sequence[str] = ("type", "created_at")
+    search_fields: Sequence[str] = ("target_id", "reason")
 
 
 @admin.register(CommandLog)
 class CommandLogAdmin(admin.ModelAdmin):
-    list_display = ("user_id", "command_name", "guild_id", "timestamp")
-    list_filter = ("command_name", "timestamp")
-    search_fields = ("user_id", "guild_id")
+    list_display: Sequence[str] = ("user_id", "command_name", "guild_id", "timestamp")
+    list_filter: Sequence[str] = ("command_name", "timestamp")
+    search_fields: Sequence[str] = ("user_id", "guild_id")
 
 
 class SBCRequirementInline(admin.TabularInline):
     model = SBCRequirement
     extra = 1
-    autocomplete_fields = ["specific_template"]
+    autocomplete_fields: Sequence[str] = ["specific_template"]
 
 
 @admin.register(SBC)
 class SBCAdmin(admin.ModelAdmin):
-    list_display = ("name", "reward_card", "is_active", "end_date")
-    list_filter = ("is_active", "end_date")
-    search_fields = ("name", "reward_card__name")
-    autocomplete_fields = ["reward_card"]
-    inlines = [SBCRequirementInline]
+    list_display: Sequence[str] = ("name", "reward_card", "reward_pack", "is_active", "end_date")
+    list_filter: Sequence[str] = ("is_active", "end_date")
+    search_fields: Sequence[str] = ("name",)
+    autocomplete_fields: Sequence[str] = ["reward_card", "reward_pack"]
+    inlines: Sequence[type] = [SBCRequirementInline]
 
 
 @admin.register(PremiumRole)
 class PremiumRoleAdmin(admin.ModelAdmin):
-    list_display = ("role_id", "label", "added_at")
-    search_fields = ("role_id", "label")
+    list_display: Sequence[str] = ("role_id", "label", "added_at")
+    search_fields: Sequence[str] = ("role_id", "label")
 
 
 @admin.register(Pack)
 class PackAdmin(admin.ModelAdmin):
-    list_display = ("name", "code", "cooldown_days", "is_premium_only")
-    search_fields = ("name", "code")
+    list_display: Sequence[str] = ("name", "code", "cooldown_days", "is_premium_only", "card_type_filter", "event_name_filter", "min_ovr_filter", "max_ovr_filter")
+    search_fields: Sequence[str] = ("name", "code")
 
 
 @admin.register(UserPack)
 class UserPackAdmin(admin.ModelAdmin):
-    list_display = ("user", "pack", "stash_count", "last_opened_at")
-    search_fields = ("user__username", "user__discord_id", "pack__name")
-    list_filter = ("pack",)
+    list_display: Sequence[str] = ("user", "pack", "stash_count", "last_opened_at")
+    search_fields: Sequence[str] = ("user__username", "user__discord_id", "pack__name")
+    list_filter: Sequence[str] = ("pack",)

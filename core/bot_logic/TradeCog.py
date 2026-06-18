@@ -17,6 +17,7 @@ class AcceptTradeView(discord.ui.View):
         self.initiator = initiator
         self.receiver = receiver
         self.cog = cog
+        self._processing = False
 
     @discord.ui.button(label="Accept Trade", style=discord.ButtonStyle.success)
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -24,12 +25,17 @@ class AcceptTradeView(discord.ui.View):
             return await interaction.response.send_message(
                 "Only the invited user can accept this trade.", ephemeral=True
             )
-
+        if self._processing:
+            return await interaction.response.send_message(
+                "Already processing…", ephemeral=True
+            )
+        self._processing = True
         await interaction.response.defer()
         self.stop()
 
         for child in self.children:
-            child.disabled = True
+            if isinstance(child, (discord.ui.Button, discord.ui.Select)):
+                child.disabled = True
         await interaction.edit_original_response(
             content=f"✅ {self.receiver.mention} accepted the trade request from {self.initiator.mention}!",
             view=self,
@@ -43,6 +49,7 @@ class TradeActionView(discord.ui.View):
         super().__init__(timeout=None)
         self.trade_id = trade_id
         self.cog = cog
+        self._processing = False
         # Overwrite custom IDs for persistence across bot restarts
         self.confirm_btn.custom_id = f"conf_{trade_id}"
         self.cancel_btn.custom_id = f"canc_{trade_id}"
@@ -53,6 +60,11 @@ class TradeActionView(discord.ui.View):
     async def confirm_btn(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
+        if self._processing:
+            return await interaction.response.send_message(
+                "Already processing…", ephemeral=True
+            )
+        self._processing = True
         await interaction.response.defer(ephemeral=True)
         t = ACTIVE_TRADES.get(self.trade_id)
         if not t:
@@ -83,14 +95,21 @@ class TradeActionView(discord.ui.View):
 
         if t["initiator_confirm"] and t["receiver_confirm"]:
             for child in self.children:
-                child.disabled = True
+                if isinstance(child, (discord.ui.Button, discord.ui.Select)):
+                    child.disabled = True
             await t["message"].edit(view=self)
             await self.cog.execute_trade(self.trade_id)
+        self._processing = False
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="❌")
     async def cancel_btn(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
+        if self._processing:
+            return await interaction.response.send_message(
+                "Already processing…", ephemeral=True
+            )
+        self._processing = True
         await interaction.response.defer()
         t = ACTIVE_TRADES.get(self.trade_id)
         if not t:
@@ -102,7 +121,8 @@ class TradeActionView(discord.ui.View):
             )
 
         for child in self.children:
-            child.disabled = True
+            if isinstance(child, (discord.ui.Button, discord.ui.Select)):
+                child.disabled = True
         await t["message"].edit(
             content=f"❌ Trade cancelled by {interaction.user.mention}.", view=self
         )
@@ -139,7 +159,8 @@ class TradeBulkAddSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         # The view handles the logic
-        await self.view.add_selected_cards(interaction, self.values)
+        if isinstance(self.view, TradeBulkAddView):
+            await self.view.add_selected_cards(interaction, self.values)
 
 
 class TradeBulkAddView(CardListView):
@@ -156,15 +177,15 @@ class TradeBulkAddView(CardListView):
 
     def add_utility_buttons(self, interaction):
         add_all_btn = discord.ui.Button(label="Add All on Page", style=discord.ButtonStyle.success, row=1)
-        async def cb_add_all(it):
+        async def cb_add_all(interaction_add_all: discord.Interaction):
             card_ids = [c.card_id for c in self.current_cards]
-            await self.add_selected_cards(it, card_ids)
+            await self.add_selected_cards(interaction_add_all, card_ids)
         add_all_btn.callback = cb_add_all
         self.add_item(add_all_btn)
 
         quit_btn = discord.ui.Button(label="Done", style=discord.ButtonStyle.primary, row=1)
-        async def cb_quit(it):
-            await it.response.edit_message(content="✅ Finished adding cards to trade.", view=None)
+        async def cb_quit(interaction_quit: discord.Interaction):
+            await interaction_quit.response.edit_message(content="✅ Finished adding cards to trade.", view=None)
             self.stop()
         quit_btn.callback = cb_quit
         self.add_item(quit_btn)
@@ -208,7 +229,7 @@ class TradeCog(commands.Cog, name="Trading"):
         self.bot = bot
         self.check_inactive_trades.start()
 
-    def cog_unload(self):
+    async def cog_unload(self) -> None:
         self.check_inactive_trades.cancel()
 
     @tasks.loop(minutes=5)

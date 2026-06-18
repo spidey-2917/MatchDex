@@ -35,7 +35,7 @@ class GeneralCog(commands.Cog, name="General"):
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="collection", description="Show your card collection summary")
-    async def collection(self, interaction: discord.Interaction, user: discord.Member = None):
+    async def collection(self, interaction: discord.Interaction, user: discord.Member | None = None):
         target_user = user or interaction.user
         db_user, _ = await DiscordUser.objects.aget_or_create(
             discord_id=target_user.id,
