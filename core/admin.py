@@ -1,4 +1,5 @@
 from typing import Sequence
+from django import forms
 from django.contrib import admin
 from django.utils.html import format_html
 
@@ -287,8 +288,38 @@ class PremiumRoleAdmin(admin.ModelAdmin):
     search_fields: Sequence[str] = ("role_id", "label")
 
 
+class PackAdminForm(forms.ModelForm):
+    class Meta:
+        model = Pack
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            # Populate event_name_filter choices
+            event_names = list(CardTemplate.objects.exclude(event_name__isnull=True).exclude(event_name="").values_list('event_name', flat=True).distinct())
+            event_choices = [("", "--- Any Event ---")] + [(name, name) for name in sorted(event_names)]
+            self.fields['event_name_filter'] = forms.ChoiceField(
+                choices=event_choices,
+                required=False,
+                help_text="Require specific event name (dropdown from existing templates)"
+            )
+
+            # Populate rate_config_category choices
+            rate_configs = list(RateConfig.objects.values_list('category', flat=True).distinct())
+            rate_choices = [("", "--- Default ---")] + [(cat, cat) for cat in sorted(rate_configs)]
+            self.fields['rate_config_category'] = forms.ChoiceField(
+                choices=rate_choices,
+                required=False,
+                help_text="The category string matching a RateConfig"
+            )
+        except Exception:
+            pass
+
+
 @admin.register(Pack)
 class PackAdmin(admin.ModelAdmin):
+    form = PackAdminForm
     list_display: Sequence[str] = ("name", "code", "cooldown_days", "is_premium_only", "card_type_filter", "event_name_filter", "min_ovr_filter", "max_ovr_filter")
     search_fields: Sequence[str] = ("name", "code")
 

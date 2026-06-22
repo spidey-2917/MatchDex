@@ -167,7 +167,7 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
     def _apply_extra_filters(qs):
         """Apply the caller-supplied event/OVR filters to a queryset."""
         if event_name_filter:
-            qs = qs.filter(event_name__iexact=event_name_filter)
+            qs = qs.filter(event_name__icontains=event_name_filter)
         if min_ovr_filter is not None:
             qs = qs.filter(ovr__gte=min_ovr_filter)
         if max_ovr_filter is not None:
@@ -224,16 +224,14 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
         if not qs:
             # First fallback: keep chosen_type but ignore rarity
             fallback_qs = CardTemplate.objects.filter(
-                card_type=chosen_type, rarity__in=spawnable_rarities
+                card_type=chosen_type
             )
             fallback_qs = _apply_extra_filters(fallback_qs)
             if fallback_qs.exists():
                 qs = fallback_qs
             else:
                 # Second fallback: ignore card type filter but keep extra filters
-                last_resort_qs = CardTemplate.objects.filter(
-                    rarity__in=spawnable_rarities
-                )
+                last_resort_qs = CardTemplate.objects.all()
                 last_resort_qs = _apply_extra_filters(last_resort_qs)
                 if last_resort_qs.exists():
                     qs = last_resort_qs
@@ -250,22 +248,19 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
             card_type=chosen_type,
             ovr__gte=min_ovr,
             ovr__lte=max_ovr,
-            rarity__in=spawnable_rarities,
         )
         qs = _apply_extra_filters(qs)
         if not qs.exists():
             # First fallback: keep chosen_type but ignore OVR range
             fallback_qs = CardTemplate.objects.filter(
-                card_type=chosen_type, rarity__in=spawnable_rarities
+                card_type=chosen_type
             )
             fallback_qs = _apply_extra_filters(fallback_qs)
             if fallback_qs.exists():
                 qs = fallback_qs
             else:
                 # Second fallback: ignore card type but keep extra filters
-                last_resort_qs = CardTemplate.objects.filter(
-                    rarity__in=spawnable_rarities
-                )
+                last_resort_qs = CardTemplate.objects.all()
                 last_resort_qs = _apply_extra_filters(last_resort_qs)
                 if last_resort_qs.exists():
                     qs = last_resort_qs

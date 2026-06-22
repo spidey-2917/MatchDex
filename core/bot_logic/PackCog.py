@@ -45,12 +45,21 @@ class PackCog(commands.Cog, name="Packs"):
         last_redeem_attr = f"last_pack_{pack_type}"
         last_redeem = getattr(user, last_redeem_attr, None)
 
-        if not used_stash and cooldown_days and last_redeem:
+        if last_redeem is None and user_pack and user_pack.last_opened_at:
+            last_redeem = user_pack.last_opened_at
+
+        if cooldown_days and last_redeem:
             if now < last_redeem + timedelta(days=cooldown_days):
                 remaining = (last_redeem + timedelta(days=cooldown_days)) - now
-                hours, remainder = divmod(int(remaining.total_seconds()), 3600)
-                minutes, _ = divmod(remainder, 60)
-                msg = f"You need to wait **{hours}h {minutes}m** before opening another {pack_type} pack!"
+                total_hours = int(remaining.total_seconds()) // 3600
+                days, hours = divmod(total_hours, 24)
+                minutes = (int(remaining.total_seconds()) % 3600) // 60
+                
+                if days > 0:
+                    msg = f"You need to wait **{days}d {hours}h {minutes}m** before opening another {pack_type} pack!"
+                else:
+                    msg = f"You need to wait **{hours}h {minutes}m** before opening another {pack_type} pack!"
+                    
                 if interaction.response.is_done():
                     await interaction.followup.send(msg, ephemeral=True)
                 else:
