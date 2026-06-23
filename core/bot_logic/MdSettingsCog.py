@@ -198,28 +198,35 @@ class MdSettingsCog(commands.Cog, name="Settings"):
 
         await interaction.response.defer()
 
+        from django.db.models import Q
+
         @sync_to_async
         def find_card():
             # 1. Try finding by unique UserCard ID
             uc = (
-                UserCard.objects.filter(card_id__iexact=identifier)
+                UserCard.objects.filter(card_id__iexact=identifier, owner__discord_id=interaction.user.id)
                 .select_related("template", "owner", "traded_by")
                 .first()
             )
             if uc:
                 return uc, uc.template
 
-            # 2. Try finding by Template name
-            tpl = (
-                CardTemplate.objects.filter(name__iexact=identifier).first()
-                or CardTemplate.objects.filter(name__icontains=identifier).first()
+            # 2. Try finding by Template name within user's inventory
+            uc_by_name = (
+                UserCard.objects.filter(owner__discord_id=interaction.user.id)
+                .filter(Q(template__name__iexact=identifier) | Q(template__name__icontains=identifier))
+                .select_related("template", "owner", "traded_by")
+                .first()
             )
-            return None, tpl
+            if uc_by_name:
+                return uc_by_name, uc_by_name.template
+                
+            return None, None
 
         user_card, template = await find_card()
         if not template:
             await interaction.followup.send(
-                f"Could not find any player or card matching **{identifier}**.",
+                f"Could not find any card matching **{identifier}** in your inventory.",
                 ephemeral=True,
             )
             return
@@ -266,7 +273,7 @@ class MdSettingsCog(commands.Cog, name="Settings"):
             app_commands.Choice(name="Catch Date (Newest)", value="date"),
         ]
     )
-    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False, user: discord.Member | None = None):
+    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False, user: discord.Member | None = None, event: str | None = None):
         # Determine target user
         target_member = user or interaction.user
         target_db, _ = await DiscordUser.objects.aget_or_create(
@@ -284,7 +291,7 @@ class MdSettingsCog(commands.Cog, name="Settings"):
                 )
 
         # We'll initialize the view which will handle fetching and pagination
-        view = SettingsCardListView(target_db, sort_by, self.bot, reverse, requester_id=interaction.user.id)
+        view = SettingsCardListView(target_db, sort_by, self.bot, reverse, requester_id=interaction.user.id, event=event)
         await view.update_view(interaction)
 
     @md_group.command(

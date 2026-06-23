@@ -488,6 +488,129 @@ class AdminCog(commands.Cog, name="Admin"):
     #  /admin md
     # ══════════════════════════════════════════════════════════
 
+    @md_group.command(name="show", description="Show a card regardless of ownership, and last traded by")
+    @app_commands.describe(bot_id="The unique bot ID of the card (e.g. #abcdef)")
+    async def md_show(self, interaction: discord.Interaction, bot_id: str):
+        if not await self.check_admin(interaction):
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        @sync_to_async
+        def get_card():
+            return UserCard.objects.filter(card_id__iexact=bot_id).select_related("template", "owner", "traded_by").first()
+
+        card = await get_card()
+        if not card:
+            return await interaction.followup.send(f"Card with ID **{bot_id}** not found.", ephemeral=True)
+
+        image_buffer = await asyncio.to_thread(generate_card_image, card.template)
+        file = discord.File(fp=image_buffer, filename=f"{card.template.name}.png")
+
+        caught_str = f"Caught on {discord.utils.format_dt(card.caught_at, 'f')} ({discord.utils.format_dt(card.caught_at, 'R')})."
+
+        traded_by_str = ""
+        if card.traded_by:
+            trader_name = card.traded_by.username or str(card.traded_by.discord_id)
+            if interaction.guild:
+                member = interaction.guild.get_member(card.traded_by.discord_id)
+                if member:
+                    trader_name = member.display_name
+            traded_by_str = f"\nTraded by: {trader_name} ({card.traded_by.discord_id})"
+
+        owner_name = card.owner.username or str(card.owner.discord_id)
+        if interaction.guild:
+            member = interaction.guild.get_member(card.owner.discord_id)
+            if member:
+                owner_name = member.display_name
+
+        content = (
+            f"ID: #{card.card_id}\n"
+            f"Current Owner: {owner_name} ({card.owner.discord_id})\n"
+            f"{caught_str}{traded_by_str}\n\n"
+            f"ATK: {card.template.attack_stat}\n"
+            f"DEF: {card.template.defence_stat}"
+        )
+
+        await interaction.followup.send(content=content, file=file, ephemeral=True)
+
+    @admin_group.command(name="transfer", description="Transfer a specific card from one user to another")
+    @app_commands.describe(
+        source_user="User who currently owns the card",
+        bot_id="The unique bot ID of the card (e.g. #abcdef)",
+        target_user="User to transfer the card to"
+    )
+    async def admin_transfer(self, interaction: discord.Interaction, source_user: discord.Member, bot_id: str, target_user: discord.Member):
+        if not await self.check_admin(interaction):
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        from core.utils import clear_card_from_lineups
+        
+        target_db, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=target_user.id, defaults={"username": target_user.name}
+        )
+        source_db = await DiscordUser.objects.filter(discord_id=source_user.id).afirst()
+        
+        if not source_db:
+            return await interaction.followup.send("Source user not found in database.", ephemeral=True)
+
+        card = await UserCard.objects.filter(card_id__iexact=bot_id, owner=source_db).select_related("template").afirst()
+        if not card:
+            return await interaction.followup.send(f"Card **{bot_id}** not found in {source_user.mention}'s inventory.", ephemeral=True)
+
+        card.owner = target_db
+        card.traded_by = source_db
+        await card.asave()
+
+        await clear_card_from_lineups(card.id)
+
+        target_db.cards_collected += 1
+        await target_db.asave()
+
+        await interaction.followup.send(f"✅ Transferred **{card.template.display_name}** (#{card.card_id}) from {source_user.mention} to {target_user.mention}.")
+
+    @admin_group.command(name="transfer_list", description="Transfer all cards from one user to another")
+    @app_commands.describe(
+        source_user="User whose entire collection will be transferred",
+        target_user="User to receive the collection"
+    )
+    async def admin_transfer_list(self, interaction: discord.Interaction, source_user: discord.Member, target_user: discord.Member):
+        if not await self.check_admin(interaction):
+            return
+
+        if source_user.id == target_user.id:
+            return await interaction.response.send_message("Source and target must be different users.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        target_db, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=target_user.id, defaults={"username": target_user.name}
+        )
+        source_db = await DiscordUser.objects.filter(discord_id=source_user.id).afirst()
+        
+        if not source_db:
+            return await interaction.followup.send("Source user not found in database.", ephemeral=True)
+
+        cards = UserCard.objects.filter(owner=source_db)
+        count = await cards.acount()
+        
+        if count == 0:
+            return await interaction.followup.send(f"{source_user.mention} has no cards to transfer.", ephemeral=True)
+
+        # Clear all cards from source lineups
+        from core.models import Lineup
+        await Lineup.objects.filter(owner=source_db).adelete()
+
+        # Perform the bulk update
+        await cards.aupdate(owner=target_db, traded_by=source_db)
+
+        target_db.cards_collected += count
+        await target_db.asave()
+
+        await interaction.followup.send(f"✅ Transferred **{count}** cards from {source_user.mention} to {target_user.mention}.")
+
     @md_group.command(name="count", description="Count cards for a player or globally")
     async def md_count(
         self, interaction: discord.Interaction, user: discord.Member | None = None

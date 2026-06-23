@@ -141,6 +141,21 @@ class InfoCog(commands.Cog, name="Info"):
 
         await interaction.response.send_message(embed=embed)
 
+    # ── /shop ────────────────────────────────────────────────
+    @app_commands.command(name="shop", description="Get a link to the MatchDex store")
+    async def shop(self, interaction: discord.Interaction):
+        message_content = (
+            "Checkout the store for exciting packs and premium cards follow the link below : \n"
+            "https://ko-fi.com/matchdex\n"
+            "can mail issues to \n"
+            "matchdexadministration@gmail.com"
+        )
+        try:
+            await interaction.user.send(message_content)
+            await interaction.response.send_message("I've sent you a DM with the shop details!", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("I couldn't send you a DM. Please check your privacy settings!\n\n" + message_content, ephemeral=True)
+
     # ── /favourite ───────────────────────────────────────────
     @app_commands.command(
         name="favourite",
@@ -200,7 +215,7 @@ class InfoCog(commands.Cog, name="Info"):
         name="completion",
         description="Show how much of the card collection you've completed",
     )
-    async def completion(self, interaction: discord.Interaction):
+    async def completion(self, interaction: discord.Interaction, show_missing: bool = False):
         from core.models import CardTemplate, DiscordUser, UserCard
 
         user, _ = await DiscordUser.objects.aget_or_create(
@@ -238,9 +253,10 @@ class InfoCog(commands.Cog, name="Info"):
                 )
                 owned_by_type[ct] = (ct_owned, ct_total)
 
-            return len(owned_ids), total, owned_by_type
+            return owned_ids, total, owned_by_type
 
-        owned, total, by_type = await get_completion()
+        owned_ids, total, by_type = await get_completion()
+        owned = len(owned_ids)
 
         if total == 0:
             await interaction.response.send_message(
@@ -283,7 +299,27 @@ class InfoCog(commands.Cog, name="Info"):
             )
 
         embed.set_footer(text="Catch 'em all!")
-        await interaction.response.send_message(embed=embed)
+
+        if show_missing:
+            @sync_to_async
+            def get_missing():
+                return list(CardTemplate.objects.exclude(id__in=owned_ids).order_by('-ovr'))
+
+            missing_cards = await get_missing()
+            if missing_cards:
+                lines = [f"Missing Cards for {interaction.user.name} (Sorted by OVR)\n"]
+                for c in missing_cards:
+                    event_str = f" [{c.event_name}]" if c.event_name else ""
+                    lines.append(f"{c.ovr} OVR | {c.name}{event_str} | {c.rarity}")
+                
+                import io
+                file_bytes = io.BytesIO("\n".join(lines).encode("utf-8"))
+                missing_file = discord.File(fp=file_bytes, filename=f"missing_cards_{interaction.user.name}.txt")
+                await interaction.response.send_message(embed=embed, file=missing_file)
+            else:
+                await interaction.response.send_message(content="You have collected all cards!", embed=embed)
+        else:
+            await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot):

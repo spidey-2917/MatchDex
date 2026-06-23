@@ -473,7 +473,7 @@ class CardListView(discord.ui.View):
     Reusable base view for listing cards with pagination.
     Subclasses should override add_selection_menu to customize behavior.
     """
-    def __init__(self, user_db, sort_by, bot, reverse=False, ephemeral=False, requester_id=None):
+    def __init__(self, user_db, sort_by, bot, reverse=False, ephemeral=False, requester_id=None, event: str | None = None):
         super().__init__(timeout=180)
         self.user_db = user_db
         self.sort_by = sort_by
@@ -481,6 +481,7 @@ class CardListView(discord.ui.View):
         self.reverse = reverse
         self.ephemeral = ephemeral
         self.requester_id = requester_id
+        self.event = event
         self.page = 0
         self.page_size = 25
         self.total_cards = 0
@@ -501,6 +502,9 @@ class CardListView(discord.ui.View):
         def fetch():
             qs = UserCard.objects.filter(owner=self.user_db).select_related("template")
             
+            if getattr(self, 'event', None):
+                qs = qs.filter(template__event_name__icontains=self.event)
+
             if self.sort_by == "ovr":
                 order = ["-template__ovr", "-caught_at"]
                 if self.reverse: order = ["template__ovr", "caught_at"]
