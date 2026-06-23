@@ -540,7 +540,7 @@ class AdminCog(commands.Cog, name="Admin"):
         bot_id="The unique bot ID of the card (e.g. #abcdef)",
         target_user="User to transfer the card to"
     )
-    async def admin_transfer(self, interaction: discord.Interaction, source_user: discord.Member, bot_id: str, target_user: discord.Member):
+    async def admin_transfer(self, interaction: discord.Interaction, source_user: str, bot_id: str, target_user: str):
         if not await self.check_admin(interaction):
             return
 
@@ -548,17 +548,33 @@ class AdminCog(commands.Cog, name="Admin"):
 
         from core.utils import clear_card_from_lineups
         
-        target_db, _ = await DiscordUser.objects.aget_or_create(
-            discord_id=target_user.id, defaults={"username": target_user.name}
-        )
-        source_db = await DiscordUser.objects.filter(discord_id=source_user.id).afirst()
-        
+        async def resolve_user(user_input: str, create: bool = False):
+            clean = user_input.strip("<@!> ")
+            if clean.isdigit():
+                user_id = int(clean)
+                db_user = await DiscordUser.objects.filter(discord_id=user_id).afirst()
+                if db_user:
+                    return db_user
+                if create:
+                    try:
+                        d_user = await self.bot.fetch_user(user_id)
+                        db_user, _ = await DiscordUser.objects.aget_or_create(discord_id=user_id, defaults={"username": d_user.name})
+                        return db_user
+                    except:
+                        pass
+            return await DiscordUser.objects.filter(username__iexact=user_input).afirst()
+
+        source_db = await resolve_user(source_user)
         if not source_db:
-            return await interaction.followup.send("Source user not found in database.", ephemeral=True)
+            return await interaction.followup.send(f"Source user '{source_user}' not found in database.", ephemeral=True)
+
+        target_db = await resolve_user(target_user, create=True)
+        if not target_db:
+            return await interaction.followup.send(f"Target user '{target_user}' could not be resolved.", ephemeral=True)
 
         card = await UserCard.objects.filter(card_id__iexact=bot_id, owner=source_db).select_related("template").afirst()
         if not card:
-            return await interaction.followup.send(f"Card **{bot_id}** not found in {source_user.mention}'s inventory.", ephemeral=True)
+            return await interaction.followup.send(f"Card **{bot_id}** not found in {source_db.username}'s inventory.", ephemeral=True)
 
         card.owner = target_db
         card.traded_by = source_db
@@ -569,35 +585,51 @@ class AdminCog(commands.Cog, name="Admin"):
         target_db.cards_collected += 1
         await target_db.asave()
 
-        await interaction.followup.send(f"✅ Transferred **{card.template.display_name}** (#{card.card_id}) from {source_user.mention} to {target_user.mention}.")
+        await interaction.followup.send(f"✅ Transferred **{card.template.display_name}** (#{card.card_id}) from **{source_db.username}** to **{target_db.username}**.")
 
     @admin_group.command(name="transfer_list", description="Transfer all cards from one user to another")
     @app_commands.describe(
         source_user="User whose entire collection will be transferred",
         target_user="User to receive the collection"
     )
-    async def admin_transfer_list(self, interaction: discord.Interaction, source_user: discord.Member, target_user: discord.Member):
+    async def admin_transfer_list(self, interaction: discord.Interaction, source_user: str, target_user: str):
         if not await self.check_admin(interaction):
             return
 
-        if source_user.id == target_user.id:
-            return await interaction.response.send_message("Source and target must be different users.", ephemeral=True)
-
         await interaction.response.defer(ephemeral=True)
 
-        target_db, _ = await DiscordUser.objects.aget_or_create(
-            discord_id=target_user.id, defaults={"username": target_user.name}
-        )
-        source_db = await DiscordUser.objects.filter(discord_id=source_user.id).afirst()
-        
+        async def resolve_user(user_input: str, create: bool = False):
+            clean = user_input.strip("<@!> ")
+            if clean.isdigit():
+                user_id = int(clean)
+                db_user = await DiscordUser.objects.filter(discord_id=user_id).afirst()
+                if db_user:
+                    return db_user
+                if create:
+                    try:
+                        d_user = await self.bot.fetch_user(user_id)
+                        db_user, _ = await DiscordUser.objects.aget_or_create(discord_id=user_id, defaults={"username": d_user.name})
+                        return db_user
+                    except:
+                        pass
+            return await DiscordUser.objects.filter(username__iexact=user_input).afirst()
+
+        source_db = await resolve_user(source_user)
         if not source_db:
-            return await interaction.followup.send("Source user not found in database.", ephemeral=True)
+            return await interaction.followup.send(f"Source user '{source_user}' not found in database.", ephemeral=True)
+
+        target_db = await resolve_user(target_user, create=True)
+        if not target_db:
+            return await interaction.followup.send(f"Target user '{target_user}' could not be resolved.", ephemeral=True)
+
+        if source_db.discord_id == target_db.discord_id:
+            return await interaction.followup.send("Source and target must be different users.", ephemeral=True)
 
         cards = UserCard.objects.filter(owner=source_db)
         count = await cards.acount()
         
         if count == 0:
-            return await interaction.followup.send(f"{source_user.mention} has no cards to transfer.", ephemeral=True)
+            return await interaction.followup.send(f"**{source_db.username}** has no cards to transfer.", ephemeral=True)
 
         # Clear all cards from source lineups
         from core.models import Lineup
@@ -609,7 +641,7 @@ class AdminCog(commands.Cog, name="Admin"):
         target_db.cards_collected += count
         await target_db.asave()
 
-        await interaction.followup.send(f"✅ Transferred **{count}** cards from {source_user.mention} to {target_user.mention}.")
+        await interaction.followup.send(f"✅ Transferred **{count}** cards from **{source_db.username}** to **{target_db.username}**.")
 
     @md_group.command(name="count", description="Count cards for a player or globally")
     async def md_count(
