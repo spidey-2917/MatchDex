@@ -279,7 +279,11 @@ class MdSettingsCog(commands.Cog, name="Settings"):
         target_name = None
 
         if user:
-            clean = user.strip("<@!> ")
+            if hasattr(user, 'id'):
+                user_val = str(user.id)
+            else:
+                user_val = str(user)
+            clean = user_val.strip("<@!> ")
             if clean.isdigit():
                 user_id = int(clean)
                 target_db = await DiscordUser.objects.filter(discord_id=user_id).afirst()
