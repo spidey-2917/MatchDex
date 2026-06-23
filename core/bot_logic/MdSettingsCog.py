@@ -273,21 +273,45 @@ class MdSettingsCog(commands.Cog, name="Settings"):
             app_commands.Choice(name="Catch Date (Newest)", value="date"),
         ]
     )
-    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False, user: discord.Member | None = None, event: str | None = None):
-        # Determine target user
-        target_member = user or interaction.user
-        target_db, _ = await DiscordUser.objects.aget_or_create(
-            discord_id=target_member.id,
-            defaults={"username": target_member.name},
-        )
+    async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False, user: str | None = None, event: str | None = None):
+        target_db = None
+        target_id = None
+        target_name = None
+
+        if user:
+            clean = user.strip("<@!> ")
+            if clean.isdigit():
+                user_id = int(clean)
+                target_db = await DiscordUser.objects.filter(discord_id=user_id).afirst()
+                if not target_db:
+                    try:
+                        d_user = await self.bot.fetch_user(user_id)
+                        target_db, _ = await DiscordUser.objects.aget_or_create(discord_id=user_id, defaults={"username": d_user.name})
+                    except:
+                        pass
+            if not target_db:
+                target_db = await DiscordUser.objects.filter(username__iexact=user).afirst()
+
+            if not target_db:
+                return await interaction.response.send_message(f"User '{user}' not found.", ephemeral=True)
+            
+            target_id = target_db.discord_id
+            target_name = target_db.username
+        else:
+            target_id = interaction.user.id
+            target_name = interaction.user.name
+            target_db, _ = await DiscordUser.objects.aget_or_create(
+                discord_id=target_id,
+                defaults={"username": target_name},
+            )
 
         # Privacy check: if viewing someone else's inventory
-        if target_member.id != interaction.user.id and target_db.is_inventory_private:
+        if target_id != interaction.user.id and target_db.is_inventory_private:
             # Check if requester is a bot admin (they bypass privacy)
             is_requester_admin = await self.bot.is_admin(interaction.user)
             if not is_requester_admin:
                 return await interaction.response.send_message(
-                    f"🔒 **{target_member.display_name}**'s inventory is set to private.", ephemeral=True
+                    f"🔒 **{target_name}**'s inventory is set to private.", ephemeral=True
                 )
 
         # We'll initialize the view which will handle fetching and pagination
