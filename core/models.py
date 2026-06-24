@@ -34,6 +34,7 @@ class DiscordUser(TypedModel):
     is_admin = models.BooleanField(default=False)
     is_inventory_private = models.BooleanField(default=False)
     joined_at = models.DateTimeField(auto_now_add=True)
+    total_packs_opened = models.IntegerField(default=0)
 
     last_pack_daily = models.DateTimeField(null=True, blank=True)
     last_pack_weekly = models.DateTimeField(null=True, blank=True)
@@ -624,3 +625,30 @@ class UserPack(TypedModel):
 
     def __str__(self):
         return f"{self.user.username} - {self.pack.name} ({self.stash_count})"
+
+
+class Season(TypedModel):
+    name = models.CharField(max_length=100, unique=True, help_text="e.g., 'Season 1'")
+    is_active = models.BooleanField(default=False)
+    start_date = models.DateTimeField(auto_now_add=True)
+    end_date = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.name} (Active: {self.is_active})"
+
+
+class Referral(TypedModel):
+    STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("COMPLETED", "Completed"),
+    ]
+    inviter = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="referrals_sent")
+    invited_user = models.OneToOneField(DiscordUser, on_delete=models.CASCADE, related_name="referral_received")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    season = models.ForeignKey(Season, on_delete=models.SET_NULL, null=True, blank=True, related_name="referrals")
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.inviter.username} -> {self.invited_user.username} ({self.status})"
+

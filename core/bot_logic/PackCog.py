@@ -103,7 +103,47 @@ class PackCog(commands.Cog, name="Packs"):
             await user_pack.asave()
             
         user.cards_collected += 1
+        user.total_packs_opened += 1
         await user.asave()
+
+        # ── Referral Completion Logic ──
+        if user.total_packs_opened == 25:
+            from core.models import Referral
+            pending_ref = await Referral.objects.filter(invited_user=user, status="PENDING").afirst()
+            if pending_ref:
+                pending_ref.status = "COMPLETED"
+                pending_ref.completed_at = timezone.now()
+                await pending_ref.asave()
+
+                # Grant milestone rewards to inviter
+                inviter = pending_ref.inviter
+                completed_count = await Referral.objects.filter(inviter=inviter, status="COMPLETED").acount()
+                
+                reward_msg = ""
+                
+                if completed_count == 1:
+                    reward_msg = "a **Rare Card**"
+                elif completed_count == 3:
+                    reward_msg = "a **Guaranteed Special Card**"
+                elif completed_count == 5:
+                    reward_msg = "an **Event Pack**"
+                elif completed_count == 10:
+                    reward_msg = "an **Exclusive Card**"
+                elif completed_count == 25:
+                    reward_msg = "a **Limited Icon**"
+
+                if reward_msg:
+                    try:
+                        inviter_discord = await self.bot.fetch_user(inviter.discord_id)
+                        await inviter_discord.send(
+                            f"🎉 **Referral Milestone Reached!**\n"
+                            f"Your invitee **{user.username}** has completed the 25-pack requirement.\n"
+                            f"You have reached **{completed_count} completed invites** and are eligible for {reward_msg}!\n\n"
+                            f"**Please open a ticket in our support server to claim your reward.**"
+                        )
+                    except Exception:
+                        pass
+
 
         # Generate image
         import asyncio

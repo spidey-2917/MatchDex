@@ -1391,5 +1391,50 @@ class AdminCog(commands.Cog, name="Admin"):
                 ephemeral=True
             )
 
+    @md_group.command(name="season_end", description="End the current referral season and display top scouts")
+    async def md_season_end(self, interaction: discord.Interaction):
+        if not await self.check_admin(interaction):
+            return
+
+        from core.models import Season, Referral
+        from django.db.models import Count
+        from django.utils import timezone
+        
+        active_season = await Season.objects.filter(is_active=True).afirst()
+        if not active_season:
+            await interaction.response.send_message("❌ There is no active season currently running.", ephemeral=True)
+            return
+
+        # Fetch top 10 recruiters for this season
+        top_scouts = []
+        async for r in Referral.objects.filter(status="COMPLETED", season=active_season).values('inviter__username').annotate(total=Count('id')).order_by('-total')[:10]:
+            top_scouts.append(r)
+
+        active_season.is_active = False
+        active_season.end_date = timezone.now()
+        await active_season.asave()
+
+        # Create new season automatically
+        next_season_num = await Season.objects.acount() + 1
+        new_season_name = f"Season {next_season_num}"
+        await Season.objects.acreate(name=new_season_name, is_active=True)
+
+        embed = discord.Embed(
+            title=f"🛑 {active_season.name} has ended!",
+            description=f"A new season (**{new_season_name}**) has begun. Here are the top recruiters from {active_season.name}:",
+            color=discord.Color.red()
+        )
+
+        if not top_scouts:
+            embed.add_field(name="Leaderboard", value="No completed referrals this season.", inline=False)
+        else:
+            board = ""
+            for i, scout in enumerate(top_scouts, 1):
+                board += f"**{i}.** {scout['inviter__username']} - {scout['total']} invites\n"
+            embed.add_field(name="Top 10 Scouts", value=board, inline=False)
+            embed.set_footer(text="Please manually distribute any manual rewards to these top scouts.")
+
+        await interaction.response.send_message(embed=embed)
+
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))
