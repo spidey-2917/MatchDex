@@ -43,7 +43,7 @@ class CatchModal(discord.ui.Modal, title="Catch Player"):
         words = max(len(guessed), 1) / 5.0
         wpm = (words / elapsed_time) * 60.0
 
-        if wpm > 120.0:
+        if wpm > 100.0:
             await interaction.response.send_message(
                 f"{interaction.user.mention} Stop that Autofill lil bro you ain't tuff with that"
             )
