@@ -644,23 +644,49 @@ class AdminCog(commands.Cog, name="Admin"):
         await interaction.followup.send(f"✅ Transferred **{count}** cards from **{source_db.username}** to **{target_db.username}**.")
 
     @md_group.command(name="count", description="Count cards for a player or globally")
+    @app_commands.autocomplete(card_name=template_autocomplete)
     async def md_count(
-        self, interaction: discord.Interaction, user: discord.Member | None = None
+        self, interaction: discord.Interaction, user: discord.Member | None = None, card_name: str | None = None
     ):
         if not await self.check_admin(interaction):
             return
 
         await interaction.response.defer(ephemeral=True)
+        
+        card = None
+        if card_name:
+            @sync_to_async
+            def find():
+                if "|" in card_name:
+                    name, ev = card_name.split("|", 1)
+                    return CardTemplate.objects.filter(name=name, event_name=ev).first()
+                return CardTemplate.objects.filter(name__icontains=card_name).first()
+
+            card = await find()
+            if not card:
+                await interaction.followup.send(
+                    f"No card found matching '{card_name}'.", ephemeral=True
+                )
+                return
+
         if user:
             u, _ = await DiscordUser.objects.aget_or_create(discord_id=user.id)
-            count = await UserCard.objects.filter(owner=u).acount()
-            await interaction.followup.send(f"{user.mention} owns **{count}** cards.")
+            if card:
+                count = await UserCard.objects.filter(owner=u, template=card).acount()
+                await interaction.followup.send(f"{user.mention} owns **{count}** copies of **{card.display_name}**.")
+            else:
+                count = await UserCard.objects.filter(owner=u).acount()
+                await interaction.followup.send(f"{user.mention} owns **{count}** cards.")
         else:
-            count = await UserCard.objects.all().acount()
-            templates = await CardTemplate.objects.all().acount()
-            await interaction.followup.send(
-                f"**{count}** cards in existence across **{templates}** templates."
-            )
+            if card:
+                count = await UserCard.objects.filter(template=card).acount()
+                await interaction.followup.send(f"There are **{count}** copies of **{card.display_name}** in existence.")
+            else:
+                count = await UserCard.objects.all().acount()
+                templates = await CardTemplate.objects.all().acount()
+                await interaction.followup.send(
+                    f"**{count}** cards in existence across **{templates}** templates."
+                )
 
     @md_group.command(
         name="access", description="Grant or revoke admin access for a user"

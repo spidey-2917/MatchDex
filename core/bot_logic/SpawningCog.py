@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import random
+import time
 
 import discord
 from asgiref.sync import sync_to_async
@@ -29,7 +30,22 @@ class CatchModal(discord.ui.Modal, title="Catch Player"):
     async def on_submit(self, interaction: discord.Interaction):
         if self.view_instance.caught:
             await interaction.response.send_message(
-                "Someone else already caught this card!", ephemeral=True
+                f"{interaction.user.mention} RIP Bro Someone else got it !!"
+            )
+            return
+
+        click_time = self.view_instance.click_times.get(interaction.user.id, 0)
+        elapsed_time = max(time.time() - click_time, 0.001) if click_time else 1.0
+
+        guessed = self.player_name.value.strip().lower()
+        actual = self.card_template.name.lower()
+
+        words = max(len(guessed), 1) / 5.0
+        wpm = (words / elapsed_time) * 60.0
+
+        if wpm > 120.0:
+            await interaction.response.send_message(
+                f"{interaction.user.mention} Stop that Autofill lil bro you ain't tuff with that"
             )
             return
 
@@ -69,6 +85,7 @@ class CatchView(discord.ui.View):
         self.card_template = card_template
         self.caught = False
         self.message = None
+        self.click_times = {}
         # Use the label from config
         self.catch_button.label = settings.catch_button_label
 
@@ -92,9 +109,11 @@ class CatchView(discord.ui.View):
     ):
         if self.caught:
             await interaction.response.send_message(
-                "This card has already been caught!", ephemeral=True
+                f"{interaction.user.mention} RIP Bro Someone else got it !!"
             )
             return
+            
+        self.click_times[interaction.user.id] = time.time()
         await interaction.response.send_modal(CatchModal(self.card_template, self))
 
 
