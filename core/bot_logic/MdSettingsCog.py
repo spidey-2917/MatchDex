@@ -111,7 +111,88 @@ class ConfirmGiftView(discord.ui.View):
         await interaction.response.edit_message(content="❌ Gift cancelled.", view=None)
         self.stop()
 
+class ReceiverApprovalView(discord.ui.View):
+    def __init__(self, sender_id, recipient, card):
+        super().__init__(timeout=60)
+        self.sender_id = sender_id
+        self.recipient = recipient
+        self.card = card
 
+    @discord.ui.button(label="Accept Gift", style=discord.ButtonStyle.success)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.recipient.id:
+            return await interaction.response.send_message("Only the recipient can accept this.", ephemeral=True)
+
+        self.card = await UserCard.objects.select_related("template").aget(id=self.card.id)
+        if self.card.owner_id != self.sender_id:
+            return await interaction.response.send_message("The sender no longer owns this card!", ephemeral=True)
+
+        target_user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=self.recipient.id, defaults={"username": self.recipient.name}
+        )
+        sender_user = await DiscordUser.objects.aget(discord_id=self.sender_id)
+        
+        self.card.owner = target_user
+        self.card.traded_by = sender_user
+        await self.card.asave()
+
+        await clear_card_from_lineups(self.card.id)
+
+        for child in self.children:
+            child.disabled = True
+        
+        await interaction.response.edit_message(
+            content=f"✅ {interaction.user.mention} accepted the gift!",
+            view=self
+        )
+
+        if interaction.channel and isinstance(interaction.channel, discord.abc.Messageable):
+            await interaction.channel.send(
+                f"🎁 **<@{self.sender_id}>** gave **{self.card.template.display_name}** "
+                f"(`#{self.card.card_id}`) to {self.recipient.mention}!"
+            )
+        self.stop()
+
+    @discord.ui.button(label="Decline", style=discord.ButtonStyle.danger)
+    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.recipient.id:
+            return await interaction.response.send_message("Only the recipient can decline this.", ephemeral=True)
+            
+        await interaction.response.edit_message(content=f"❌ {interaction.user.mention} declined the gift.", view=None)
+        self.stop()
+
+class FriendRequestView(discord.ui.View):
+    def __init__(self, requester, target):
+        super().__init__(timeout=10)
+        self.requester = requester
+        self.target = target
+
+    @discord.ui.button(label="Accept", style=discord.ButtonStyle.success)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.target.id:
+            return await interaction.response.send_message("Only the recipient can accept this.", ephemeral=True)
+
+        user1, _ = await DiscordUser.objects.aget_or_create(discord_id=self.requester.id, defaults={"username": self.requester.name})
+        user2, _ = await DiscordUser.objects.aget_or_create(discord_id=self.target.id, defaults={"username": self.target.name})
+        
+        await user1.friends.aadd(user2)
+
+        for child in self.children:
+            child.disabled = True
+        
+        await interaction.response.edit_message(
+            content=f"✅ {self.target.mention} and {self.requester.mention} are now friends!",
+            view=self
+        )
+        self.stop()
+
+    @discord.ui.button(label="Decline", style=discord.ButtonStyle.danger)
+    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.target.id:
+            return await interaction.response.send_message("Only the recipient can decline this.", ephemeral=True)
+            
+        await interaction.response.edit_message(content=f"❌ {self.target.mention} declined the friend request.", view=None)
+        self.stop()
 class MdSettingsCog(commands.Cog, name="Settings"):
     def __init__(self, bot):
         self.bot = bot
@@ -119,6 +200,56 @@ class MdSettingsCog(commands.Cog, name="Settings"):
     md_group = app_commands.Group(
         name="md", description="Master configuration and data management commands"
     )
+
+    friend_group = app_commands.Group(
+        name="friend", description="Manage your MatchDex friends", parent=md_group
+    )
+
+    @friend_group.command(name="add", description="Send a friend request to another user")
+    async def friend_add(self, interaction: discord.Interaction, user: discord.Member):
+        if user.id == interaction.user.id:
+            return await interaction.response.send_message("You cannot add yourself as a friend!", ephemeral=True)
+        if user.bot:
+            return await interaction.response.send_message("You cannot add bots as friends!", ephemeral=True)
+
+        requester, _ = await DiscordUser.objects.aget_or_create(discord_id=interaction.user.id, defaults={"username": interaction.user.name})
+        target, _ = await DiscordUser.objects.aget_or_create(discord_id=user.id, defaults={"username": user.name})
+
+        if await requester.friends.filter(discord_id=target.discord_id).aexists():
+            return await interaction.response.send_message(f"You are already friends with {user.mention}!", ephemeral=True)
+
+        view = FriendRequestView(interaction.user, user)
+        await interaction.response.send_message(
+            f"👋 {user.mention}, **{interaction.user.name}** wants to add you as a friend!\n*(You have 10 seconds to accept)*",
+            view=view
+        )
+
+    @friend_group.command(name="remove", description="Remove a friend")
+    async def friend_remove(self, interaction: discord.Interaction, user: discord.Member):
+        requester, _ = await DiscordUser.objects.aget_or_create(discord_id=interaction.user.id, defaults={"username": interaction.user.name})
+        target, _ = await DiscordUser.objects.aget_or_create(discord_id=user.id, defaults={"username": user.name})
+        
+        if not await requester.friends.filter(discord_id=target.discord_id).aexists():
+            return await interaction.response.send_message(f"You are not friends with {user.mention}.", ephemeral=True)
+            
+        await requester.friends.aremove(target)
+        await interaction.response.send_message(f"✅ Removed {user.mention} from your friends list.", ephemeral=True)
+
+    @friend_group.command(name="list", description="List all your friends")
+    async def friend_list(self, interaction: discord.Interaction):
+        requester, _ = await DiscordUser.objects.aget_or_create(discord_id=interaction.user.id, defaults={"username": interaction.user.name})
+        
+        friends = []
+        async for friend in requester.friends.all():
+            friends.append(f"<@{friend.discord_id}>")
+            
+        if not friends:
+            return await interaction.response.send_message("You don't have any friends yet! Use `/md friend add`.", ephemeral=True)
+            
+        embed = discord.Embed(title=f"👥 {interaction.user.name}'s Friends", color=discord.Color.blue())
+        embed.description = "\n".join(friends)
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @md_group.command(
         name="delete",
@@ -347,13 +478,47 @@ class MdSettingsCog(commands.Cog, name="Settings"):
                 f"You don't own a card with ID **#{identifier}**.", ephemeral=True
             )
 
-        view = ConfirmGiftView(interaction.user.id, user, card)
-        await interaction.response.send_message(
-            f"🤝 Are you sure you want to give your **{card.template.display_name}** (#{card.card_id}) to {user.mention}?\n"
-            "*This action is irreversible!*",
-            view=view,
-            ephemeral=True
-        )
+        sender_user, _ = await DiscordUser.objects.aget_or_create(discord_id=interaction.user.id, defaults={"username": interaction.user.name})
+        target_user, _ = await DiscordUser.objects.aget_or_create(discord_id=user.id, defaults={"username": user.name})
+        
+        policy = target_user.donation_policy
+        is_friend = await sender_user.friends.filter(discord_id=target_user.discord_id).aexists()
+        
+        needs_approval = False
+        if policy == "PRIVATE":
+            needs_approval = True
+        elif policy == "FRIENDS" and not is_friend:
+            needs_approval = True
+            
+        if needs_approval:
+            view = ReceiverApprovalView(interaction.user.id, user, card)
+            await interaction.response.send_message(
+                f"🤝 {user.mention}, **{interaction.user.name}** wants to gift you **{card.template.display_name}** (#{card.card_id}). Do you want to receive it?\n*(You have 60 seconds to accept)*",
+                view=view,
+                ephemeral=False
+            )
+        else:
+            view = ConfirmGiftView(interaction.user.id, user, card)
+            await interaction.response.send_message(
+                f"🤝 Are you sure you want to give your **{card.template.display_name}** (#{card.card_id}) to {user.mention}?\n"
+                "*This action is irreversible!*",
+                view=view,
+                ephemeral=True
+            )
+
+    @md_group.command(name="donation_policy", description="Set who can send you gifts (Open, Friends Only, Private)")
+    @app_commands.choices(policy=[
+        app_commands.Choice(name="Open (Anyone)", value="OPEN"),
+        app_commands.Choice(name="Friends Only", value="FRIENDS"),
+        app_commands.Choice(name="Private (Require Approval)", value="PRIVATE"),
+    ])
+    async def donation_policy(self, interaction: discord.Interaction, policy: str):
+        user, _ = await DiscordUser.objects.aget_or_create(discord_id=interaction.user.id, defaults={"username": interaction.user.name})
+        user.donation_policy = policy
+        await user.asave()
+        
+        policy_names = {"OPEN": "Open", "FRIENDS": "Friends Only", "PRIVATE": "Private"}
+        await interaction.response.send_message(f"✅ Your donation policy has been set to **{policy_names[policy]}**.", ephemeral=True)
 
     @md_group.command(
         name="privacy", description="Toggle your inventory privacy (hide your collection from others)"

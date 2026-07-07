@@ -101,10 +101,12 @@ class AdminCog(commands.Cog, name="Admin"):
     )
     @app_commands.describe(
         count="Number of cards to spawn (1-15)",
-        event="Filter spawns to a specific event (optional)"
+        event="Filter spawns to a specific event (optional)",
+        min_ovr="Minimum OVR for spawns (optional)",
+        max_ovr="Maximum OVR for spawns (optional)"
     )
     @app_commands.autocomplete(event=event_autocomplete)
-    async def spawn_random(self, interaction: discord.Interaction, count: int = 5, event: str | None = None):
+    async def spawn_random(self, interaction: discord.Interaction, count: int = 5, event: str | None = None, min_ovr: int | None = None, max_ovr: int | None = None):
         if not await self.check_admin(interaction):
             return
 
@@ -112,20 +114,55 @@ class AdminCog(commands.Cog, name="Admin"):
             await interaction.response.send_message("This command can only be used in a text channel.", ephemeral=True)
             return
 
+        if min_ovr is not None and max_ovr is not None and min_ovr > max_ovr:
+            await interaction.response.send_message("Minimum OVR cannot be greater than Maximum OVR.", ephemeral=True)
+            return
+
         count = max(1, min(count, 15))
         event_label = f" (event: {event})" if event else ""
+        ovr_label = f" (OVR {min_ovr}-{max_ovr})" if min_ovr is not None and max_ovr is not None else ""
         await interaction.response.send_message(
-            f"Spawning {count} card(s){event_label}…", ephemeral=True
+            f"Spawning {count} card(s){event_label}{ovr_label}…", ephemeral=True
         )
 
         from core.utils import pick_random_card
+        from core.models import CardTemplate
+        import random
 
         spawned = 0
         for _ in range(count):
-            card = await sync_to_async(pick_random_card)(
-                "PACK",
-                event_name_filter=event,
-            )
+            if min_ovr is not None and max_ovr is not None:
+                # Custom dynamic weighted spawn based on OVR range
+                @sync_to_async
+                def _pick_dynamic_ovr():
+                    qs = CardTemplate.objects.filter(ovr__gte=min_ovr, ovr__lte=max_ovr)
+                    if event:
+                        qs = qs.filter(event_name__icontains=event)
+                    if not qs.exists():
+                        return None
+                        
+                    cards = list(qs)
+                    weights = []
+                    # Dynamic weight: exponential decay based on OVR
+                    # The higher the OVR, the lower the weight. 
+                    denom = max(1, max_ovr - min_ovr)
+                    for c in cards:
+                        # e.g., if max_ovr=90, min_ovr=70, denom=20
+                        # c.ovr=70 -> weight=100**(20/20) = 100
+                        # c.ovr=80 -> weight=100**(10/20) = 10
+                        # c.ovr=90 -> weight=100**(0/20) = 1
+                        weights.append(100 ** ((max_ovr - c.ovr) / denom))
+                    return random.choices(cards, weights=weights, k=1)[0]
+                
+                card = await _pick_dynamic_ovr()
+            else:
+                card = await sync_to_async(pick_random_card)(
+                    "PACK",
+                    event_name_filter=event,
+                    min_ovr_filter=min_ovr,
+                    max_ovr_filter=max_ovr
+                )
+                
             if not card:
                 continue
 

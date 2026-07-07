@@ -35,6 +35,14 @@ class DiscordUser(TypedModel):
     is_inventory_private = models.BooleanField(default=False)
     joined_at = models.DateTimeField(auto_now_add=True)
     total_packs_opened = models.IntegerField(default=0)
+    
+    DONATION_CHOICES = [
+        ("OPEN", "Open"),
+        ("FRIENDS", "Friends Only"),
+        ("PRIVATE", "Private"),
+    ]
+    donation_policy = models.CharField(max_length=10, choices=DONATION_CHOICES, default="OPEN")
+    friends = models.ManyToManyField("self", blank=True, symmetrical=True)
 
     last_pack_daily = models.DateTimeField(null=True, blank=True)
     last_pack_weekly = models.DateTimeField(null=True, blank=True)
