@@ -293,6 +293,10 @@ class WagerArena(discord.ui.View):
                     card.save()
 
             await do_transfer()
+            
+            from core.utils import clear_card_from_lineups
+            for card in cards_to_transfer:
+                await clear_card_from_lineups(card.id)
 
         self.status += f"\n\n🏆 **{winner_user.mention} WINS THE SHOWDOWN!** 🏆\nAll staked cards have been transferred to the winner."
         self.end_wager_state()

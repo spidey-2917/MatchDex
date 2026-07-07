@@ -415,27 +415,24 @@ async def clear_card_from_lineups(user_card_id: int):
 
     @sync_to_async
     def clear():
-        lineups = Lineup.objects.filter(query)
-        for lineup in lineups:
-            if lineup.gk_id == user_card_id: lineup.gk = None
-            if lineup.df1_id == user_card_id: lineup.df1 = None
-            if lineup.df2_id == user_card_id: lineup.df2 = None
-            if lineup.df3_id == user_card_id: lineup.df3 = None
-            if lineup.df4_id == user_card_id: lineup.df4 = None
-            if lineup.df5_id == user_card_id: lineup.df5 = None
-            if lineup.md1_id == user_card_id: lineup.md1 = None
-            if lineup.md2_id == user_card_id: lineup.md2 = None
-            if lineup.md3_id == user_card_id: lineup.md3 = None
-            if lineup.md4_id == user_card_id: lineup.md4 = None
-            if lineup.md5_id == user_card_id: lineup.md5 = None
-            if lineup.at1_id == user_card_id: lineup.at1 = None
-            if lineup.at2_id == user_card_id: lineup.at2 = None
-            if lineup.at3_id == user_card_id: lineup.at3 = None
-            if lineup.at4_id == user_card_id: lineup.at4 = None
-            if lineup.sub1_id == user_card_id: lineup.sub1 = None
-            if lineup.sub2_id == user_card_id: lineup.sub2 = None
-            if lineup.sub3_id == user_card_id: lineup.sub3 = None
-            lineup.save()
+        Lineup.objects.filter(gk_id=user_card_id).update(gk_id=None)
+        Lineup.objects.filter(df1_id=user_card_id).update(df1_id=None)
+        Lineup.objects.filter(df2_id=user_card_id).update(df2_id=None)
+        Lineup.objects.filter(df3_id=user_card_id).update(df3_id=None)
+        Lineup.objects.filter(df4_id=user_card_id).update(df4_id=None)
+        Lineup.objects.filter(df5_id=user_card_id).update(df5_id=None)
+        Lineup.objects.filter(md1_id=user_card_id).update(md1_id=None)
+        Lineup.objects.filter(md2_id=user_card_id).update(md2_id=None)
+        Lineup.objects.filter(md3_id=user_card_id).update(md3_id=None)
+        Lineup.objects.filter(md4_id=user_card_id).update(md4_id=None)
+        Lineup.objects.filter(md5_id=user_card_id).update(md5_id=None)
+        Lineup.objects.filter(at1_id=user_card_id).update(at1_id=None)
+        Lineup.objects.filter(at2_id=user_card_id).update(at2_id=None)
+        Lineup.objects.filter(at3_id=user_card_id).update(at3_id=None)
+        Lineup.objects.filter(at4_id=user_card_id).update(at4_id=None)
+        Lineup.objects.filter(sub1_id=user_card_id).update(sub1_id=None)
+        Lineup.objects.filter(sub2_id=user_card_id).update(sub2_id=None)
+        Lineup.objects.filter(sub3_id=user_card_id).update(sub3_id=None)
 
     await clear()
 

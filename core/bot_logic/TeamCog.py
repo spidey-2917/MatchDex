@@ -167,7 +167,7 @@ class TeamCog(commands.Cog, name="Teams"):
     # ─── /team_view ─────────────────────────────────────────────
     @app_commands.command(name="team_view", description="View a squad with details")
     async def team_view(
-        self, interaction: discord.Interaction, member: discord.Member | None = None
+        self, interaction: discord.Interaction, member: discord.Member | None = None, pitch_view: bool = False
     ):
         await interaction.response.defer(ephemeral=False)
         target = member or interaction.user
@@ -187,6 +187,7 @@ class TeamCog(commands.Cog, name="Teams"):
 
             # Build the display
             sections = {"GK": [], "DEF": [], "MID": [], "ATT": []}
+            pitch_data = {}
             for slot_name in slots:
                 card = getattr(lineup, slot_name, None)
                 prefix = slot_name[:2]
@@ -198,6 +199,7 @@ class TeamCog(commands.Cog, name="Teams"):
                     sections[group].append(
                         f"• **{template.name}** ({template.position}) — {template.ovr} OVR"
                     )
+                    pitch_data[slot_name] = {"ovr": template.ovr, "name": template.name}
                 else:
                     sections[group].append(f"• *Empty Slot* ({slot_name.upper()})")
 
@@ -213,17 +215,17 @@ class TeamCog(commands.Cog, name="Teams"):
                 else:
                     sub_lines.append(f"• *Empty* ({s.upper()})")
 
-            return f_info, sections, (power, filled, total), sub_lines
+            return formation_key, f_info, sections, (power, filled, total), sub_lines, pitch_data
 
         result = await get_lineup_data()
 
-        if result[0] is None or result[1] is None or result[2] is None or result[3] is None:
+        if result[0] is None:
             await interaction.followup.send(
                 f"**{target.name}** doesn't have a squad yet!", ephemeral=False
             )
             return
 
-        f_info, sections, stats, sub_lines = result
+        formation_key, f_info, sections, stats, sub_lines, pitch_data = result
         power, filled, total = stats
 
         # Build embed
@@ -260,8 +262,23 @@ class TeamCog(commands.Cog, name="Teams"):
 
         embed.add_field(name="🔄 Substitutes", value="\n".join(sub_lines), inline=False)
 
-        embed.set_footer(text="Use /team_add to place players • /team_sub to set subs")
-        await interaction.followup.send(embed=embed, ephemeral=False)
+        embed.set_footer(text="Matchdex Bot")
+
+        file = None
+        if pitch_view:
+            import asyncio
+            from core.pitch_generator import generate_pitch_image
+            
+            loop = asyncio.get_event_loop()
+            img_io = await loop.run_in_executor(None, generate_pitch_image, pitch_data, formation_key)
+            if img_io:
+                file = discord.File(fp=img_io, filename="pitch.png")
+                embed.set_image(url="attachment://pitch.png")
+
+        if file:
+            await interaction.followup.send(embed=embed, file=file)
+        else:
+            await interaction.followup.send(embed=embed)
 
     # ─── /team_add ──────────────────────────────────────────────
     @app_commands.command(
