@@ -10,6 +10,8 @@ from discord.ext import commands
 from core.models import CardTemplate, DiscordUser, ServerSettings, UserCard
 from core.settings import settings
 from core.utils import generate_card_image
+from core.utils.objectives import update_objective_progress
+from django.utils import timezone
 
 log = logging.getLogger("matchdex.spawn")
 
@@ -64,6 +66,26 @@ class CatchModal(discord.ui.Modal, title="Catch Player"):
             )
             user.cards_collected += 1
             await user.asave()
+            
+            # Update objectives
+            await update_objective_progress(user, "claim_card")
+            
+            # Catch Logging
+            if interaction.guild:
+                server_settings = await ServerSettings.objects.filter(guild_id=interaction.guild.id).afirst()
+                if server_settings and server_settings.catch_log_channel_id:
+                    log_channel = interaction.guild.get_channel(server_settings.catch_log_channel_id)
+                    if log_channel:
+                        log_embed = discord.Embed(
+                            title="New Card Caught!",
+                            description=f"**{interaction.user.name}** caught **{self.card_template.name}** ({self.card_template.rarity})",
+                            color=discord.Color.green(),
+                            timestamp=timezone.now()
+                        )
+                        try:
+                            await log_channel.send(embed=log_embed)
+                        except discord.Forbidden:
+                            pass
 
             await interaction.response.send_message(
                 f"{interaction.user.mention} You caught **{self.card_template.display_name}**! "

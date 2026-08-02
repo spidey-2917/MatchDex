@@ -6,6 +6,7 @@ from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
 
 from core.models import DiscordUser, Trade, TradeItem, UserCard
+from core.utils.objectives import update_objective_progress
 from core.utils import CardListView
 
 ACTIVE_TRADES = {}
@@ -722,8 +723,11 @@ class TradeCog(commands.Cog, name="Trading"):
             )
 
         db_trade.status = "COMPLETED"
-        db_trade.completed_at = datetime.now(timezone.utc)
+        db_trade.completed_at = timezone.now()
         await db_trade.asave()
+
+        await update_objective_progress(initiator_db, "perform_trade")
+        await update_objective_progress(receiver_db, "perform_trade")
 
         embed = discord.Embed(
             title="🎉 Trade Completed successfully!",

@@ -6,8 +6,9 @@ from asgiref.sync import sync_to_async
 from discord import app_commands
 from discord.ext import commands
 
-from core.models import DiscordUser, UserCard
-
+from core.models import CardTemplate, DiscordUser, UserCard
+from core.utils import generate_card_image
+from core.utils.objectives import update_objective_progress
 
 class WagerArena(discord.ui.View):
     def __init__(self, cog, user_a: discord.Member, user_b: discord.Member):
@@ -288,11 +289,15 @@ class WagerArena(discord.ui.View):
             @sync_to_async
             def do_transfer():
                 winner_db_user = DiscordUser.objects.get(discord_id=winner_user.id)
+                loser_db_user = DiscordUser.objects.get(discord_id=loser_user.id)
                 for card in cards_to_transfer:
                     card.owner = winner_db_user
                     card.save()
+                return winner_db_user, loser_db_user
 
-            await do_transfer()
+            winner_db, loser_db = await do_transfer()
+            await update_objective_progress(winner_db, "play_wager")
+            await update_objective_progress(loser_db, "play_wager")
             
             from core.utils import clear_card_from_lineups
             for card in cards_to_transfer:

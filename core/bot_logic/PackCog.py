@@ -7,8 +7,9 @@ from discord import app_commands
 from discord.ext import commands
 from django.utils import timezone
 
-from core.models import CardTemplate, DiscordUser, UserCard
+from core.models import CardTemplate, DiscordUser, UserCard, ServerSettings
 from core.utils import generate_card_image, get_random_card_by_rarity, get_random_rarity
+from core.utils.objectives import update_objective_progress
 
 
 class PackCog(commands.Cog, name="Packs"):
@@ -105,6 +106,28 @@ class PackCog(commands.Cog, name="Packs"):
         user.cards_collected += 1
         user.total_packs_opened += 1
         await user.asave()
+
+        # Update objectives
+        await update_objective_progress(user, "open_pack")
+        await update_objective_progress(user, "claim_card")
+
+        # Catch Logging
+        if interaction.guild:
+            settings = await ServerSettings.objects.filter(guild_id=interaction.guild.id).afirst()
+            if settings and settings.catch_log_channel_id:
+                log_channel = interaction.guild.get_channel(settings.catch_log_channel_id)
+                if log_channel:
+                    log_embed = discord.Embed(
+                        title="New Card Caught!",
+                        description=f"**{interaction.user.name}** caught **{random_card.name}** ({random_card.rarity})",
+                        color=discord.Color.green(),
+                        timestamp=timezone.now()
+                    )
+                    try:
+                        await log_channel.send(embed=log_embed)
+                    except discord.Forbidden:
+                        pass
+
 
         # ── Referral Completion Logic ──
         if user.total_packs_opened == 25:

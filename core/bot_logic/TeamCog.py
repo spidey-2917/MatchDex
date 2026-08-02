@@ -167,7 +167,7 @@ class TeamCog(commands.Cog, name="Teams"):
     # ─── /team_view ─────────────────────────────────────────────
     @app_commands.command(name="team_view", description="View a squad with details")
     async def team_view(
-        self, interaction: discord.Interaction, member: discord.Member | None = None, pitch_view: bool = False
+        self, interaction: discord.Interaction, member: discord.Member | None = None #, pitch_view: bool = False
     ):
         await interaction.response.defer(ephemeral=False)
         target = member or interaction.user
@@ -264,21 +264,21 @@ class TeamCog(commands.Cog, name="Teams"):
 
         embed.set_footer(text="Matchdex Bot")
 
-        file = None
-        if pitch_view:
-            import asyncio
-            from core.pitch_generator import generate_pitch_image
-            
-            loop = asyncio.get_event_loop()
-            img_io = await loop.run_in_executor(None, generate_pitch_image, pitch_data, formation_key)
-            if img_io:
-                file = discord.File(fp=img_io, filename="pitch.png")
-                embed.set_image(url="attachment://pitch.png")
+        # file = None
+        # if pitch_view:
+        #     import asyncio
+        #     from core.pitch_generator import generate_pitch_image
+        #     
+        #     loop = asyncio.get_event_loop()
+        #     img_io = await loop.run_in_executor(None, generate_pitch_image, pitch_data, formation_key)
+        #     if img_io:
+        #         file = discord.File(fp=img_io, filename="pitch.png")
+        #         embed.set_image(url="attachment://pitch.png")
 
-        if file:
-            await interaction.followup.send(embed=embed, file=file)
-        else:
-            await interaction.followup.send(embed=embed)
+        # if file:
+        #     await interaction.followup.send(embed=embed, file=file)
+        # else:
+        await interaction.followup.send(embed=embed)
 
     # ─── /team_add ──────────────────────────────────────────────
     @app_commands.command(

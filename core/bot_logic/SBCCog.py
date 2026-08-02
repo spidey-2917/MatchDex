@@ -4,7 +4,8 @@ from django.db import models
 from discord import app_commands
 from discord.ext import commands
 
-from core.models import DiscordUser, SBC, SBCRequirement, UserCard
+from core.models import SBC, CardTemplate, DiscordUser, SBCRequirement, UserCard
+from core.utils.objectives import update_objective_progress
 from core.utils import CardListView, clear_card_from_lineups
 
 
@@ -289,7 +290,6 @@ class SBCCog(commands.Cog, name="Squad Building Challenges"):
 
         selected_ids = session["selected_cards"]
 
-        @sync_to_async
         def validate_and_execute():
             sbc = SBC.objects.select_related("reward_card", "reward_pack").get(id=sbc_id)
             user = DiscordUser.objects.get(discord_id=interaction.user.id)
@@ -326,16 +326,19 @@ class SBCCog(commands.Cog, name="Squad Building Challenges"):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=True)
 
-        success, result, reward_card = await validate_and_execute()
+        success, result, reward_card = await sync_to_async(validate_and_execute)()
         if not success:
             await interaction.followup.send(f"❌ SBC Failed: {result}", ephemeral=True)
             return
 
-        sbc_obj = result  # This is the SBC object on success
+        sbc = result
+        user = await DiscordUser.objects.aget(discord_id=interaction.user.id)
+        
+        await update_objective_progress(user, "finish_sbc")
 
         # Handle pack reward if configured
         pack_reward_text = ""
-        if sbc_obj.reward_pack_id:
+        if sbc.reward_pack_id:
             from core.models import UserPack
             user_db = await DiscordUser.objects.aget(discord_id=interaction.user.id)
             user_pack, _ = await UserPack.objects.aget_or_create(

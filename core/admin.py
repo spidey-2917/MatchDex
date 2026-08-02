@@ -25,6 +25,9 @@ from .models import (
     UserLogo,
     Pack,
     UserPack,
+    ObjectiveRewardPoolItem,
+    DailyObjectiveTemplate,
+    UserDailyObjective,
 )
 
 
@@ -329,3 +332,22 @@ class UserPackAdmin(admin.ModelAdmin):
     list_display: Sequence[str] = ("user", "pack", "stash_count", "last_opened_at")
     search_fields: Sequence[str] = ("user__username", "user__discord_id", "pack__name")
     list_filter: Sequence[str] = ("pack",)
+
+@admin.register(ObjectiveRewardPoolItem)
+class ObjectiveRewardPoolItemAdmin(admin.ModelAdmin):
+    list_display: Sequence[str] = ("name", "reward_type", "amount", "weight")
+    list_filter: Sequence[str] = ("reward_type",)
+
+
+@admin.register(DailyObjectiveTemplate)
+class DailyObjectiveTemplateAdmin(admin.ModelAdmin):
+    list_display: Sequence[str] = ("description", "objective_type", "target_amount")
+    list_filter: Sequence[str] = ("objective_type",)
+
+
+@admin.register(UserDailyObjective)
+class UserDailyObjectiveAdmin(admin.ModelAdmin):
+    list_display: Sequence[str] = ("user", "template", "date", "progress", "is_claimed")
+    list_filter: Sequence[str] = ("date", "is_claimed", "template__objective_type")
+    search_fields: Sequence[str] = ("user__username",)
+

@@ -1,80 +1,28 @@
-# MatchDex Bot Command List
+MatchDex Bot Commands
+=====================
 
-## General Commands
-- /stats: Show your basic player stats (points, wins, losses, etc.).
-- /collection [sort_by]: View your card collection with optional sorting.
-- /show <player_name>: View detailed information and the card image for a specific player.
-- /last: View details of the most recent card you caught.
-- /leaderboard [scope]: View the points leaderboard (Server or Global).
-
-## Information & Utility
-- /about: Get information about the MatchDex bot, its stats, and links.
-- /help: View a categorized list of all available commands.
-- /favourite <card_id>: Toggle a card as a favorite (marked with a ❤️ in collection).
-- /completion: View your collection completion progress by card type.
-
-## Team & Squad Management
-- /team_begin: Start building a squad by selecting a formation (resets current lineup).
-- /team_view [member]: View your own or another member's active squad and power.
-- /team_add <slot> <player_name>: Assign a card from your collection to a specific formation slot.
-- /team_auto: Automatically fill empty squad slots with your highest-rated available cards.
-- /team_remove <slot>: Remove a player from a specific slot in your squad.
-- /team_sub <slot> <player_name>: Assign a player to your bench (substitute slots).
-
-## Matches & Wagers
-- /match_start <opponent>: Challenge another user to a standard MatchDex game.
-- /match_cancel: Cancel your current active match.
-- /wager challenge <user>: Challenge a user to a high-stakes Penalty Shootout wager.
-- /wager add <card_id>: Add a card from your collection to your wager stakes.
-
-## Packs & Promotions
-- /pack_daily: Open your daily pack (Base cards, 24h cooldown).
-- /pack_weekly: Open your weekly icon pack (Icon cards, 7d cooldown).
-- /pack_event: Open your weekly event pack (Event cards, 7d cooldown).
-- /pack_premium: Open a premium pack (Icon/Event cards, 48h cooldown, requires Premium).
-- /promo <code>: Redeem a promo code for points or card rewards.
-
-## Trading
-- /trade start <user>: Initiate a trade request with another player.
-- /trade add <card_id>: Add a card to your current trade offer.
-- /trade remove <card_id>: Remove a card from your current trade offer.
-- /trade bulk_add [sort_by]: Add multiple cards to a trade via a selection menu.
-
-## User Profile & Data Management
-- /md list [sort_by]: View your entire card collection with sorting options.
-- /md show <card_id/player>: View detailed information and the card image for a specific card you own or a player.
-- /md give <user> <card_id>: Gift a player card from your collection to another user.
-- /md export: Download a JSON file containing all your user data.
-- /md delete: Permanently delete your MatchDex profile and all your data.
-
-## Server Configuration (Administrator Permission Required)
-- /config spawn_channel <channel>: Set the channel where cards will automatically spawn.
-- /config log_channel <channel>: Set the channel for server-specific administration logs.
-
-## Bot Administration (Bot Admin Only)
-### Spawn Tools
-- /admin spawn random [count]: Manually spawn catchable cards in the current channel.
-- /admin spawn card <player_name>: Manually spawn a specific player card.
-
-### Economy & Cards
-- /admin give <user> <player_search>: Directly give a specific card to a user.
-- /admin give_full <user> [include_all]: Give a user every card in the database.
-- /admin md count [user]: View card counts for a user or global database totals.
-
-### Management & Blacklist
-- /admin md access <user> <action>: Grant or revoke Bot Admin permissions.
-- /admin md reload_blacklist: Refresh the blacklist cache from the database.
-- /admin md sync: Manually sync the global slash command tree with Discord.
-- /admin blacklist add <user> [reason]: Blacklist a user from using the bot.
-- /admin blacklist-guild add <guild_id> [reason]: Blacklist an entire server from using the bot.
-
-### Logging & History
-- /admin logs catchlogs [channel]: Configure the global catch logging channel.
-- /admin logs commandlogs [channel]: Configure the global command logging channel.
-- /admin info user <user>: View deep database information for a specific user.
-- /admin info guild [guild_id]: View technical details for a specific server.
-- /admin history user <user>: View a user's recent catch and pack opening history.
-- /admin history card <card_id>: Track the history and ownership of a specific card.
-- /admin status [status] [text]: Change the bot's status (Online/Idle/DND) and activity text.
-- /admin rarity: View the distribution of card rarities across the entire database.
-- /admin cooldown [guild_id]: Check the message spawn cooldown status for a server.
+/about - Get information about this bot
+/collection - Show your card collection summary
+/completion - Show how much of the card collection you
+/favourite - No description
+/help - Overview of all available commands
+/last - Show your most recently caught card
+/leaderboard - Show the leaderboard
+/match_cancel - Cancel your active match
+/match_start - Challenge another user to a Matchdex game
+/pack_daily - Pack a daily base player card
+/pack_event - Pack a weekly event card
+/pack_open - Open a custom or stashed pack by name
+/pack_premium - No description
+/pack_wallet - View your stashed packs and open them
+/pack_weekly - Pack a weekly icon card
+/promo - Enter a promo code for a reward
+/sbc - Complete a Squad Building Challenge
+/shop - Get a link to the MatchDex store
+/stats - Show your basic stats
+/team_add - Add a player from your collection to a squad slot
+/team_auto - Auto-fill your squad with the best cards from your collection
+/team_begin - Create a new squad by selecting a formation
+/team_remove - Remove a player from a slot
+/team_sub - Set a substitute player on the bench
+/team_view - View a squad with details

@@ -4,6 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from core.models import DiscordUser, Lineup, UserCard, UserLogo
+from core.utils.objectives import update_objective_progress
 
 # Formation -> how many of each slot type are needed
 FORMATION_SLOTS = {
@@ -644,6 +645,7 @@ class MatchCog(commands.Cog, name="Matches"):
             else:
                 u.losses += 1
             await u.asave()
+            await update_objective_progress(u, "play_match")
 
         if s1 > s2:
             txt = f"🏆 **{m['p1_name']}** wins! (+3 pts)"

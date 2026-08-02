@@ -50,6 +50,49 @@ class MatchdexTree(app_commands.CommandTree):
 
         return await bot.blacklist_check(interaction)
 
+    async def on_app_command_completion(
+        self,
+        interaction: discord.Interaction,
+        command: discord.app_commands.Command | discord.app_commands.ContextMenu
+    ):
+        if interaction.guild:
+            from core.models import ServerSettings
+            from django.utils import timezone
+            
+            # Fetch settings
+            settings = await ServerSettings.objects.filter(guild_id=interaction.guild.id).afirst()
+            if settings and settings.command_log_channel_id:
+                log_channel = interaction.guild.get_channel(settings.command_log_channel_id)
+                if log_channel:
+                    command_name = getattr(command, 'qualified_name', command.name)
+                    
+                    # Create rich embed
+                    embed = discord.Embed(
+                        title="Command Executed",
+                        color=discord.Color.blue(),
+                        timestamp=timezone.now()
+                    )
+                    
+                    embed.add_field(name="Command", value=f"`/{command_name}`", inline=False)
+                    embed.add_field(name="User", value=f"{interaction.user} ({interaction.user.id})", inline=True)
+                    embed.add_field(name="Channel", value=f"{interaction.channel.mention}", inline=True)
+                    
+                    # Append arguments if available
+                    options_str = []
+                    for name, value in getattr(interaction.namespace, '__dict__', {}).items():
+                        if not name.startswith('_'):
+                            options_str.append(f"**{name}**: {value}")
+                    
+                    if options_str:
+                        embed.add_field(name="Arguments", value="\n".join(options_str), inline=False)
+                        
+                    embed.set_footer(text=f"User ID: {interaction.user.id}")
+                    
+                    try:
+                        await log_channel.send(embed=embed)
+                    except discord.Forbidden:
+                        pass
+
 
 # ── The bot ──────────────────────────────────────────────────
 class MatchdexBot(commands.AutoShardedBot):

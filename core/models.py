@@ -660,3 +660,51 @@ class Referral(TypedModel):
     def __str__(self):
         return f"{self.inviter.username} -> {self.invited_user.username} ({self.status})"
 
+
+class ObjectiveRewardPoolItem(TypedModel):
+    REWARD_TYPES = [
+        ("POINTS", "Points"),
+        ("PACK", "Pack"),
+        ("CARD", "Specific Card")
+    ]
+    name = models.CharField(max_length=100)
+    reward_type = models.CharField(max_length=20, choices=REWARD_TYPES)
+    amount = models.IntegerField(default=1, help_text="Amount of points or packs")
+    pack = models.ForeignKey("Pack", on_delete=models.SET_NULL, null=True, blank=True)
+    card = models.ForeignKey("CardTemplate", on_delete=models.SET_NULL, null=True, blank=True)
+    weight = models.IntegerField(default=10, help_text="Higher weight = more likely to drop")
+
+    def __str__(self):
+        return f"{self.name} (Weight: {self.weight})"
+
+
+class DailyObjectiveTemplate(TypedModel):
+    OBJECTIVE_TYPES = [
+        ("open_pack", "Open Packs"),
+        ("perform_trade", "Perform Trades"),
+        ("play_match", "Play Matches"),
+        ("finish_sbc", "Finish SBC"),
+        ("claim_card", "Claim Cards"),
+        ("play_wager", "Play Wagers"),
+    ]
+    objective_type = models.CharField(max_length=20, choices=OBJECTIVE_TYPES)
+    target_amount = models.IntegerField(default=1)
+    description = models.CharField(max_length=200, help_text="e.g. Play 3 matches")
+
+    def __str__(self):
+        return f"{self.description} ({self.objective_type}: {self.target_amount})"
+
+
+class UserDailyObjective(TypedModel):
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="daily_objectives")
+    template = models.ForeignKey(DailyObjectiveTemplate, on_delete=models.CASCADE)
+    date = models.DateField(auto_now_add=True)
+    progress = models.IntegerField(default=0)
+    is_claimed = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ("user", "template", "date")
+
+    def __str__(self):
+        return f"{self.user.username} - {self.template.description} - {self.date}"
+
