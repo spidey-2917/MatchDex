@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from core.models import SBC, CardTemplate, DiscordUser, SBCRequirement, UserCard
-from core.utils.objectives import update_objective_progress
+from core.objectives import update_objective_progress
 from core.utils import CardListView, clear_card_from_lineups
 
 

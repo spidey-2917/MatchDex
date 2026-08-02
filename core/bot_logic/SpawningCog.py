@@ -10,7 +10,7 @@ from discord.ext import commands
 from core.models import CardTemplate, DiscordUser, ServerSettings, UserCard
 from core.settings import settings
 from core.utils import generate_card_image
-from core.utils.objectives import update_objective_progress
+from core.objectives import update_objective_progress
 from django.utils import timezone
 
 log = logging.getLogger("matchdex.spawn")

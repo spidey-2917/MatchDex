@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from core.models import CardTemplate, DiscordUser, UserCard, ServerSettings
 from core.utils import generate_card_image, get_random_card_by_rarity, get_random_rarity
-from core.utils.objectives import update_objective_progress
+from core.objectives import update_objective_progress
 
 
 class PackCog(commands.Cog, name="Packs"):

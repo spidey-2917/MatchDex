@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from core.models import DiscordUser
-from core.utils.objectives import get_or_assign_daily_objectives, claim_objective_reward
+from core.objectives import get_or_assign_daily_objectives, claim_objective_reward
 
 class ObjectivesCog(commands.Cog, name="Objectives"):
     def __init__(self, bot):

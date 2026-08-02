@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from core.models import DiscordUser, Lineup, UserCard, UserLogo
-from core.utils.objectives import update_objective_progress
+from core.objectives import update_objective_progress
 
 # Formation -> how many of each slot type are needed
 FORMATION_SLOTS = {

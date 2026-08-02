@@ -8,7 +8,7 @@ from discord.ext import commands
 
 from core.models import CardTemplate, DiscordUser, UserCard
 from core.utils import generate_card_image
-from core.utils.objectives import update_objective_progress
+from core.objectives import update_objective_progress
 
 class WagerArena(discord.ui.View):
     def __init__(self, cog, user_a: discord.Member, user_b: discord.Member):

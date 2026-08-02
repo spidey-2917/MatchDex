@@ -6,7 +6,7 @@ from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
 
 from core.models import DiscordUser, Trade, TradeItem, UserCard
-from core.utils.objectives import update_objective_progress
+from core.objectives import update_objective_progress
 from core.utils import CardListView
 
 ACTIVE_TRADES = {}
