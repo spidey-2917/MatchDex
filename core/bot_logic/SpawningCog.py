@@ -72,9 +72,9 @@ class CatchModal(discord.ui.Modal, title="Catch Player"):
             
             # Catch Logging
             if interaction.guild:
-                server_settings = await ServerSettings.objects.filter(guild_id=interaction.guild.id).afirst()
+                server_settings = await ServerSettings.objects.exclude(catch_log_channel_id__isnull=True).afirst()
                 if server_settings and server_settings.catch_log_channel_id:
-                    log_channel = interaction.guild.get_channel(server_settings.catch_log_channel_id)
+                    log_channel = interaction.client.get_channel(server_settings.catch_log_channel_id)
                     if log_channel:
                         log_embed = discord.Embed(
                             title="New Card Caught!",

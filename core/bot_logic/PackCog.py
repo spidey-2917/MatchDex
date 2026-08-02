@@ -113,9 +113,9 @@ class PackCog(commands.Cog, name="Packs"):
 
         # Catch Logging
         if interaction.guild:
-            settings = await ServerSettings.objects.filter(guild_id=interaction.guild.id).afirst()
+            settings = await ServerSettings.objects.exclude(catch_log_channel_id__isnull=True).afirst()
             if settings and settings.catch_log_channel_id:
-                log_channel = interaction.guild.get_channel(settings.catch_log_channel_id)
+                log_channel = interaction.client.get_channel(settings.catch_log_channel_id)
                 if log_channel:
                     log_embed = discord.Embed(
                         title="New Card Caught!",

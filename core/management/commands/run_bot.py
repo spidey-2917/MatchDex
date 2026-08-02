@@ -59,10 +59,10 @@ class MatchdexTree(app_commands.CommandTree):
             from core.models import ServerSettings
             from django.utils import timezone
             
-            # Fetch settings
-            settings = await ServerSettings.objects.filter(guild_id=interaction.guild.id).afirst()
+            # Fetch settings globally
+            settings = await ServerSettings.objects.exclude(command_log_channel_id__isnull=True).afirst()
             if settings and settings.command_log_channel_id:
-                log_channel = interaction.guild.get_channel(settings.command_log_channel_id)
+                log_channel = interaction.client.get_channel(settings.command_log_channel_id)
                 if log_channel:
                     command_name = getattr(command, 'qualified_name', command.name)
                     
