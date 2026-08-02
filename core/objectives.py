@@ -10,7 +10,6 @@ from core.models import (
     ObjectiveRewardPoolItem,
     UserCard
 )
-from core.spawning import generate_card_for_template # assuming we have a way to give a card if needed
 
 log = logging.getLogger("matchdex.objectives")
 
