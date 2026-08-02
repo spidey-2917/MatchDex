@@ -244,7 +244,12 @@ class MatchdexBot(commands.AutoShardedBot):
             console.print(table)
 
         # Automatic global sync removed for extremely fast boot times! 
-        # You will run /admin md sync globally when needed.
+        # But we need to sync globals right now because admin commands became global.
+        try:
+            synced = await self.tree.sync()
+            log.info(f"Globally synced {len(synced)} commands.")
+        except Exception as e:
+            log.error(f"Failed to sync global commands: {e}")
 
         # Sync admin commands only to admin guilds
         for guild_id in settings.admin_guild_ids:
