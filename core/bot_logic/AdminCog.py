@@ -37,7 +37,6 @@ class AdminCog(commands.Cog, name="Admin"):
     admin_group = app_commands.Group(
         name="admin",
         description="Owner and admin commands",
-        guild_ids=settings.admin_guild_ids,
     )
     spawn_group = app_commands.Group(
         name="spawn", description="Card spawning tools", parent=admin_group
@@ -985,10 +984,6 @@ class AdminCog(commands.Cog, name="Admin"):
         try:
             # Clear guild-specific tree
             self.bot.tree.clear_commands(guild=interaction.guild)
-            # Re-add admin group if this is an admin guild
-            if interaction.guild_id in settings.admin_guild_ids:
-                self.bot.tree.add_command(self.admin_group, guild=interaction.guild)
-            
             # Sync
             await self.bot.tree.sync(guild=interaction.guild)
             await interaction.followup.send("✅ Command cache and spawn timers have been hard-reset for this server!", ephemeral=True)
@@ -1334,9 +1329,8 @@ class AdminCog(commands.Cog, name="Admin"):
         # 2. Update memory
         settings.admin_guild_ids.append(gid)
 
-        # 3. Add to tree for this specific guild and sync
+        # 3. Sync
         target_guild = discord.Object(id=gid)
-        self.bot.tree.add_command(self.admin_group, guild=target_guild)
         
         try:
             await self.bot.tree.sync(guild=target_guild)
@@ -1378,9 +1372,8 @@ class AdminCog(commands.Cog, name="Admin"):
         # 2. Update memory
         settings.admin_guild_ids.remove(gid)
 
-        # 3. Remove from tree for this specific guild and sync
+        # 3. Sync
         target_guild = discord.Object(id=gid)
-        self.bot.tree.remove_command(self.admin_group.name, guild=target_guild)
         
         try:
             await self.bot.tree.sync(guild=target_guild)
