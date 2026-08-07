@@ -13,8 +13,7 @@ from core.models import (
 
 log = logging.getLogger("matchdex.objectives")
 
-@sync_to_async
-def get_or_assign_daily_objectives(user):
+def _sync_get_or_assign_daily_objectives(user):
     today = timezone.now().date()
     
     # Get current objectives for today
@@ -24,15 +23,27 @@ def get_or_assign_daily_objectives(user):
         # User needs new objectives (or missing some)
         existing_templates = [obj.template.id for obj in objectives]
         
-        # Get all templates
-        all_templates = list(DailyObjectiveTemplate.objects.exclude(id__in=existing_templates))
+        # Get templates from yesterday to avoid repeats if possible
+        yesterday = today - timezone.timedelta(days=1)
+        yesterday_templates = list(UserDailyObjective.objects.filter(user=user, date=yesterday).values_list('template_id', flat=True))
         
-        if not all_templates:
+        # Get all templates
+        available_templates = list(DailyObjectiveTemplate.objects.exclude(id__in=existing_templates))
+        
+        if not available_templates:
             return objectives # No templates defined in DB
             
-        # Select random templates to fill up to 3
+        fresh_templates = [t for t in available_templates if t.id not in yesterday_templates]
         needed = 3 - len(objectives)
-        selected_templates = random.sample(all_templates, min(needed, len(all_templates)))
+        
+        if len(fresh_templates) >= needed:
+            selected_templates = random.sample(fresh_templates, needed)
+        else:
+            selected_templates = list(fresh_templates)
+            remaining_needed = needed - len(fresh_templates)
+            fallback_templates = [t for t in available_templates if t.id in yesterday_templates]
+            if fallback_templates:
+                selected_templates.extend(random.sample(fallback_templates, min(remaining_needed, len(fallback_templates))))
         
         new_objectives = []
         for template in selected_templates:
@@ -44,6 +55,10 @@ def get_or_assign_daily_objectives(user):
         
     return objectives
 
+@sync_to_async
+def get_or_assign_daily_objectives(user):
+    return _sync_get_or_assign_daily_objectives(user)
+
 
 @sync_to_async
 def update_objective_progress(user, objective_type, amount=1):
@@ -51,6 +66,8 @@ def update_objective_progress(user, objective_type, amount=1):
     Updates the progress for a specific objective type for today.
     Called when a user performs an action (e.g. open_pack, play_match).
     """
+    _sync_get_or_assign_daily_objectives(user)
+    
     today = timezone.now().date()
     
     # Find incomplete objectives of this type for today

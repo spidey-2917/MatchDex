@@ -664,7 +664,14 @@ class MatchCog(commands.Cog, name="Matches"):
         embed.description = f"**{m['p1_name']}** {s1} - {s2} **{m['p2_name']}**\n\n{txt}"
         
         if m["highlights"]:
-            hl_text = "\n".join(m["highlights"][-15:])
+            hl_text = ""
+            for h in reversed(m["highlights"][-15:]):
+                # +1 for newline, +3 for "..." if we want to add it, but just fitting the lines is fine.
+                if len(hl_text) + len(h) + 1 > 1020:
+                    hl_text = "...\n" + hl_text
+                    break
+                hl_text = h + "\n" + hl_text if hl_text else h
+                
             embed.add_field(name="Match Highlights:", value=hl_text, inline=False)
 
         if m.get("main_message"):
