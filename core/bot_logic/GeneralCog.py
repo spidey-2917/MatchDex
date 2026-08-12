@@ -174,53 +174,6 @@ class GeneralCog(commands.Cog, name="General"):
 
         await interaction.followup.send(file=file, embed=embed)
 
-    @app_commands.command(name="leaderboard", description="Show the leaderboard")
-    @app_commands.choices(
-        scope=[
-            app_commands.Choice(name="Server", value="server"),
-            app_commands.Choice(name="Global", value="global"),
-        ]
-    )
-    async def leaderboard(
-        self, interaction: discord.Interaction, scope: str = "server"
-    ):
-        await interaction.response.defer()
-
-        @sync_to_async
-        def get_lb_users():
-            if scope == "global" or not interaction.guild:
-                return list(DiscordUser.objects.order_by("-points")[:10])
-            
-            # Without members intent, interaction.guild.members is unreliable.
-            # We fetch top 200 global players and filter for those in this guild.
-            # This covers the most active/top players in most servers.
-            all_top = list(DiscordUser.objects.order_by("-points")[:200])
-            guild_users = []
-            for u in all_top:
-                if interaction.guild.get_member(u.discord_id):
-                    guild_users.append(u)
-                if len(guild_users) >= 10:
-                    break
-            return guild_users
-
-        users = await get_lb_users()
-
-        title = "Server Leaderboard" if scope == "server" else "Global Leaderboard"
-        embed = discord.Embed(title=f"🏆 {title}", color=discord.Color.gold())
-
-        if not users:
-            embed.description = "No players found."
-        else:
-            for i, u in enumerate(users, 1):
-                medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-                prefix = medals.get(i, f"**{i}.**")
-                embed.add_field(
-                    name=f"{prefix} {u.username or u.discord_id}",
-                    value=f"Points: {u.points} | Wins: {u.wins}",
-                    inline=False,
-                )
-
-        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):
