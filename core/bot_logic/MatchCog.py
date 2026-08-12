@@ -412,7 +412,7 @@ class MatchCog(commands.Cog, name="Matches"):
                 "You can't challenge a bot!", ephemeral=True
             )
 
-        # Already in a match?
+        # Already in a match (normal or quick sim)?
         for m in ACTIVE_MATCHES.values():
             if interaction.user.id in (m["p1_id"], m["p2_id"]):
                 return await interaction.followup.send(
@@ -422,6 +422,15 @@ class MatchCog(commands.Cog, name="Matches"):
                 return await interaction.followup.send(
                     f"**{opponent.name}** is already in a match!", ephemeral=True
                 )
+
+        if interaction.user.id in ACTIVE_QUICKSIMS:
+            return await interaction.followup.send(
+                "You're already in a Quick Sim!", ephemeral=True
+            )
+        if opponent.id in ACTIVE_QUICKSIMS:
+            return await interaction.followup.send(
+                f"**{opponent.name}** is already in a Quick Sim!", ephemeral=True
+            )
 
         # Lineup check
         async def has_full_lineup(uid):
@@ -463,26 +472,36 @@ class MatchCog(commands.Cog, name="Matches"):
             view=AcceptView(interaction.user, opponent, self),
         )
 
-    @app_commands.command(name="match_cancel", description="Cancel your active match")
+    @app_commands.command(name="match_cancel", description="Cancel your active match or Quick Sim")
     async def match_cancel(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
+        # Check normal matches first
         match_id_to_cancel = None
         for mid, m in ACTIVE_MATCHES.items():
             if interaction.user.id in (m["p1_id"], m["p2_id"]):
                 match_id_to_cancel = mid
                 break
 
-        if not match_id_to_cancel:
-            return await interaction.followup.send(
-                "You do not have an active match to cancel.", ephemeral=True
+        if match_id_to_cancel:
+            m = ACTIVE_MATCHES[match_id_to_cancel]
+            await interaction.followup.send(
+                f"❌ The match between **{m['p1_name']}** and **{m['p2_name']}** has been canceled by {interaction.user.mention}."
             )
+            del ACTIVE_MATCHES[match_id_to_cancel]
+            return
 
-        m = ACTIVE_MATCHES[match_id_to_cancel]
+        # Check Quick Sims
+        if interaction.user.id in ACTIVE_QUICKSIMS:
+            ACTIVE_QUICKSIMS[interaction.user.id] = "cancelled"
+            await interaction.followup.send(
+                f"❌ Quick Sim cancelled by {interaction.user.mention}."
+            )
+            return
+
         await interaction.followup.send(
-            f"❌ The match between **{m['p1_name']}** and **{m['p2_name']}** has been canceled by {interaction.user.mention}."
+            "You do not have an active match to cancel.", ephemeral=True
         )
-        del ACTIVE_MATCHES[match_id_to_cancel]
 
     # ── Start the match ─────────────────────────────────────────
     async def start_match(self, interaction, p1, p2):
@@ -880,6 +899,19 @@ class MatchCog(commands.Cog, name="Matches"):
                     pass
 
                 if not is_final:
+                    # Check if cancelled before sleeping
+                    if ACTIVE_QUICKSIMS.get(p1.id) == "cancelled" or ACTIVE_QUICKSIMS.get(p2.id) == "cancelled":
+                        embed = discord.Embed(
+                            title="🏟️ MatchDex Quick Sim — Cancelled",
+                            description="The match was cancelled.",
+                            color=discord.Color.red(),
+                        )
+                        try:
+                            await msg.edit(embed=embed)
+                        except discord.HTTPException:
+                            pass
+                        return
+
                     await asyncio.sleep(3)
 
             # ── Awards ────────────────────────────────────────

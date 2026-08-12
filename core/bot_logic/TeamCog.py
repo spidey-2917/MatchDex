@@ -611,6 +611,50 @@ class TeamCog(commands.Cog, name="Teams"):
                 f"🔄 **{name}** ({pos}) → Bench **{s}**", ephemeral=True
             )
 
+    # ── Tactic command ──────────────────────────────────────────
+
+    @app_commands.command(
+        name="tactic",
+        description="Set your team's tactic for Quick Sim matches"
+    )
+    @app_commands.choices(tactic=[
+        app_commands.Choice(name="⚖️ Balanced", value="balanced"),
+        app_commands.Choice(name="⚔️ Attacking (+ATT, -DEF)", value="attacking"),
+        app_commands.Choice(name="🛡️ Defensive (+DEF, -ATT)", value="defensive"),
+        app_commands.Choice(name="⚙️ Possession (+MID, -ATT)", value="possession"),
+        app_commands.Choice(name="⚡ Counter Attack (+DEF, counter bonus)", value="counter"),
+    ])
+    async def tactic(
+        self, interaction: discord.Interaction, tactic: app_commands.Choice[str]
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id
+        )
+        lineup = await Lineup.objects.filter(owner=user, is_active=True).afirst()
+        if not lineup:
+            return await interaction.followup.send(
+                "❌ You don't have an active lineup! Use `/squad` first.",
+                ephemeral=True,
+            )
+
+        lineup.tactic = tactic.value
+        await lineup.asave(update_fields=["tactic"])
+
+        TACTIC_EMOJIS = {
+            "balanced": "⚖️",
+            "attacking": "⚔️",
+            "defensive": "🛡️",
+            "possession": "⚙️",
+            "counter": "⚡",
+        }
+        emoji = TACTIC_EMOJIS.get(tactic.value, "📋")
+        await interaction.followup.send(
+            f"{emoji} Tactic set to **{tactic.name}**!",
+            ephemeral=True,
+        )
+
 
 async def setup(bot):
     await bot.add_cog(TeamCog(bot))
