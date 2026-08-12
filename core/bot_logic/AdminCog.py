@@ -1497,5 +1497,39 @@ class AdminCog(commands.Cog, name="Admin"):
 
         await interaction.response.send_message(embed=embed)
 
+
+    # ── Seasons ──────────────────────────────────────────────
+
+    @season_group.command(name="start")
+    @app_commands.describe(
+        name="The name of the new season (e.g. 'Season 1')",
+        duration_days="How many days the season will last",
+    )
+    async def admin_season_start(
+        self, interaction: discord.Interaction, name: str, duration_days: int
+    ):
+        """Start a new Quick Sim season and reset all ratings to 1000."""
+        from datetime import timedelta, timezone, datetime
+        await interaction.response.defer(ephemeral=False)
+
+        # Deactivate all active seasons
+        await SimSeason.objects.filter(is_active=True).aupdate(is_active=False)
+
+        # Create new season
+        end_date = datetime.now(timezone.utc) + timedelta(days=duration_days)
+        new_season = await SimSeason.objects.acreate(
+            name=name,
+            end_date=end_date,
+            is_active=True
+        )
+
+        embed = discord.Embed(
+            title="🏆 New Season Started!",
+            description=f"**{new_season.name}** has begun and will last for {duration_days} days.\nAll Quick Sim ratings have been reset to 1000 Trophies.",
+            color=discord.Color.gold()
+        )
+        await interaction.followup.send(embed=embed)
+
+
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))
