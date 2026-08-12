@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta, timezone
 
-from core.models import DiscordUser, Trade, TradeItem, UserCard
+from core.models import DiscordUser, Trade, TradeItem, UserCard, TradeObjectiveLog
 from core.objectives import update_objective_progress
 from core.utils import CardListView
 
@@ -726,7 +726,10 @@ class TradeCog(commands.Cog, name="Trading"):
         db_trade.completed_at = datetime.now(timezone.utc)
         await db_trade.asave()
 
+        await TradeObjectiveLog.objects.acreate(trade=db_trade, user=initiator_db)
         await update_objective_progress(initiator_db, "perform_trade")
+        
+        await TradeObjectiveLog.objects.acreate(trade=db_trade, user=receiver_db)
         await update_objective_progress(receiver_db, "perform_trade")
 
         embed = discord.Embed(

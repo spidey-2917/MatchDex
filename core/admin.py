@@ -28,6 +28,9 @@ from .models import (
     ObjectiveRewardPoolItem,
     DailyObjectiveTemplate,
     UserDailyObjective,
+    SimSeason,
+    SimSeasonPlayer,
+    TradeObjectiveLog,
 )
 
 
@@ -350,4 +353,24 @@ class UserDailyObjectiveAdmin(admin.ModelAdmin):
     list_display: Sequence[str] = ("user", "template", "date", "progress", "is_claimed")
     list_filter: Sequence[str] = ("date", "is_claimed", "template__objective_type")
     search_fields: Sequence[str] = ("user__username",)
+
+
+@admin.register(SimSeason)
+class SimSeasonAdmin(admin.ModelAdmin):
+    list_display = ("name", "start_date", "end_date", "is_active")
+    list_filter = ("is_active",)
+
+
+@admin.register(SimSeasonPlayer)
+class SimSeasonPlayerAdmin(admin.ModelAdmin):
+    list_display = ("user", "season", "trophies", "wins", "losses", "draws")
+    list_filter = ("season",)
+    search_fields = ("user__username", "user__discord_id")
+
+
+@admin.register(TradeObjectiveLog)
+class TradeObjectiveLogAdmin(admin.ModelAdmin):
+    list_display = ("trade", "user", "date")
+    list_filter = ("date",)
+    search_fields = ("user__username", "trade__id")
 

@@ -14,6 +14,8 @@ from core.models import (
     DiscordUser,
     ServerSettings,
     UserCard,
+    SimSeason,
+    SimSeasonPlayer,
 )
 from core.settings import settings
 from core.utils import generate_card_image, player_autocomplete, template_autocomplete
@@ -58,6 +60,9 @@ class AdminCog(commands.Cog, name="Admin"):
     )
     history_group = app_commands.Group(
         name="history", description="View command/card history", parent=admin_group
+    )
+    season_group = app_commands.Group(
+        name="season", description="Manage Quick Sim seasons", parent=admin_group
     )
     server_group = app_commands.Group(
         name="server", description="Manage admin servers", parent=admin_group

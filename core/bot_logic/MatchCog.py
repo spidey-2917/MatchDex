@@ -915,32 +915,98 @@ class MatchCog(commands.Cog, name="Matches"):
                     await asyncio.sleep(3)
 
             # ── Awards ────────────────────────────────────────
+            from core.models import SimSeason, SimSeasonPlayer
+            
             s1, s2 = result.home_score, result.away_score
-
-            async def award(uid, pts, win, draw):
-                u = await DiscordUser.objects.aget(discord_id=uid)
-                u.points += pts
-                if win:
-                    u.wins += 1
-                elif draw:
-                    u.draws += 1
+            
+            active_season = await SimSeason.objects.filter(is_active=True).afirst()
+            
+            if active_season:
+                # Elo-based trophies system
+                sp1, _ = await SimSeasonPlayer.objects.aget_or_create(
+                    user_id=p1.id, season=active_season,
+                    defaults={'trophies': 1000}
+                )
+                sp2, _ = await SimSeasonPlayer.objects.aget_or_create(
+                    user_id=p2.id, season=active_season,
+                    defaults={'trophies': 1000}
+                )
+                
+                # Simple Elo calculation
+                # Expected score (win probability)
+                ea = 1 / (1 + 10 ** ((sp2.trophies - sp1.trophies) / 400))
+                eb = 1 / (1 + 10 ** ((sp1.trophies - sp2.trophies) / 400))
+                
+                k = 32  # K-factor
+                
+                if s1 > s2:
+                    sa, sb = 1, 0
+                    sp1.wins += 1
+                    sp2.losses += 1
+                elif s2 > s1:
+                    sa, sb = 0, 1
+                    sp1.losses += 1
+                    sp2.wins += 1
                 else:
-                    u.losses += 1
-                await u.asave()
-                await update_objective_progress(u, "play_match")
-
-            if s1 > s2:
-                result_txt = f"🏆 **{p1.display_name}** wins! (+3 pts)"
-                await award(p1.id, 3, True, False)
-                await award(p2.id, 0, False, False)
-            elif s2 > s1:
-                result_txt = f"🏆 **{p2.display_name}** wins! (+3 pts)"
-                await award(p2.id, 3, True, False)
-                await award(p1.id, 0, False, False)
+                    sa, sb = 0.5, 0.5
+                    sp1.draws += 1
+                    sp2.draws += 1
+                    
+                change_a = round(k * (sa - ea))
+                change_b = round(k * (sb - eb))
+                
+                sp1.trophies += change_a
+                sp2.trophies += change_b
+                
+                await sp1.asave()
+                await sp2.asave()
+                
+                # Objectives for both
+                u1 = await DiscordUser.objects.aget(discord_id=p1.id)
+                u2 = await DiscordUser.objects.aget(discord_id=p2.id)
+                await update_objective_progress(u1, "play_match")
+                await update_objective_progress(u2, "play_match")
+                
+                # Format result text
+                def format_change(c):
+                    return f"+{c}" if c > 0 else str(c)
+                    
+                if s1 > s2:
+                    result_txt = f"🏆 **{p1.display_name}** wins! ({format_change(change_a)} Trophies)\n"
+                    result_txt += f"❌ **{p2.display_name}** loses. ({format_change(change_b)} Trophies)"
+                elif s2 > s1:
+                    result_txt = f"🏆 **{p2.display_name}** wins! ({format_change(change_b)} Trophies)\n"
+                    result_txt += f"❌ **{p1.display_name}** loses. ({format_change(change_a)} Trophies)"
+                else:
+                    result_txt = f"🤝 **Draw!**\n{p1.display_name}: {format_change(change_a)} Trophies\n{p2.display_name}: {format_change(change_b)} Trophies"
+                    
             else:
-                result_txt = "🤝 **Draw!** Both get 1 point."
-                await award(p1.id, 1, False, True)
-                await award(p2.id, 1, False, True)
+                # Fallback to classic points if no active season
+                async def award(uid, pts, win, draw):
+                    u = await DiscordUser.objects.aget(discord_id=uid)
+                    u.points += pts
+                    if win:
+                        u.wins += 1
+                    elif draw:
+                        u.draws += 1
+                    else:
+                        u.losses += 1
+                    await u.asave()
+                    await update_objective_progress(u, "play_match")
+
+                if s1 > s2:
+                    result_txt = f"🏆 **{p1.display_name}** wins! (+3 pts)"
+                    await award(p1.id, 3, True, False)
+                    await award(p2.id, 0, False, False)
+                elif s2 > s1:
+                    result_txt = f"🏆 **{p2.display_name}** wins! (+3 pts)"
+                    await award(p2.id, 3, True, False)
+                    await award(p1.id, 0, False, False)
+                else:
+                    result_txt = "🤝 **Draw!** Both get 1 point."
+                    await award(p1.id, 1, False, True)
+                    await award(p2.id, 1, False, True)
+
 
             embed.add_field(name="Result", value=result_txt, inline=False)
             try:

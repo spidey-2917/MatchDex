@@ -719,3 +719,40 @@ class UserDailyObjective(TypedModel):
     def __str__(self):
         return f"{self.user.username} - {self.template.description} - {self.date}"
 
+
+class SimSeason(TypedModel):
+    name = models.CharField(max_length=100)
+    start_date = models.DateTimeField(auto_now_add=True)
+    end_date = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+
+
+class SimSeasonPlayer(TypedModel):
+    season = models.ForeignKey(SimSeason, on_delete=models.CASCADE, related_name="players")
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="sim_seasons")
+    trophies = models.IntegerField(default=1000)
+    wins = models.IntegerField(default=0)
+    losses = models.IntegerField(default=0)
+    draws = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("season", "user")
+
+    def __str__(self):
+        return f"{self.user.username} - {self.season.name} ({self.trophies} Trophies)"
+
+
+class TradeObjectiveLog(TypedModel):
+    trade = models.ForeignKey(Trade, on_delete=models.CASCADE)
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE)
+    date = models.DateField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("trade", "user")
+
+    def __str__(self):
+        return f"Trade #{self.trade.id} - {self.user.username}"
+
