@@ -1,3 +1,5 @@
+import asyncio
+
 import discord
 from asgiref.sync import sync_to_async
 from discord import app_commands
@@ -5,6 +7,7 @@ from discord.ext import commands
 
 from core.models import DiscordUser, Lineup, UserCard, UserLogo
 from core.objectives import update_objective_progress
+from core.bot_logic.quick_sim import build_team_data, simulate_match
 
 # Formation -> how many of each slot type are needed
 FORMATION_SLOTS = {
@@ -680,6 +683,316 @@ class MatchCog(commands.Cog, name="Matches"):
             await ch.send(embed=embed)
         del ACTIVE_MATCHES[mid]
 
+    # ════════════════════════════════════════════════════════════
+    #  QUICK SIM — /match_sim command
+    # ════════════════════════════════════════════════════════════
+
+    @app_commands.command(
+        name="match_sim",
+        description="Challenge another user to a Quick Sim match — simulates a full 90-minute game!"
+    )
+    async def match_sim(
+        self, interaction: discord.Interaction, opponent: discord.Member
+    ):
+        await interaction.response.defer()
+
+        if opponent.id == interaction.user.id:
+            return await interaction.followup.send(
+                "You can't challenge yourself!", ephemeral=True
+            )
+        if opponent.bot:
+            return await interaction.followup.send(
+                "You can't challenge a bot!", ephemeral=True
+            )
+
+        # Check not already in a quicksim or regular match
+        for m in ACTIVE_MATCHES.values():
+            if interaction.user.id in (m["p1_id"], m["p2_id"]):
+                return await interaction.followup.send(
+                    "You're already in a match!", ephemeral=True
+                )
+            if opponent.id in (m["p1_id"], m["p2_id"]):
+                return await interaction.followup.send(
+                    f"**{opponent.name}** is already in a match!", ephemeral=True
+                )
+
+        for uid in ACTIVE_QUICKSIMS:
+            if interaction.user.id == uid or opponent.id == uid:
+                return await interaction.followup.send(
+                    "One of you is already in a Quick Sim!", ephemeral=True
+                )
+
+        # Lineup check
+        async def has_full_lineup(uid):
+            user, _ = await DiscordUser.objects.aget_or_create(discord_id=uid)
+            lineup = await Lineup.objects.filter(
+                owner=user, is_active=True
+            ).afirst()
+            if not lineup or not lineup.gk_id:
+                return False
+            req = FORMATION_SLOTS.get(
+                lineup.formation, {"gk": 1, "df": 4, "md": 3, "at": 3}
+            )
+            if (
+                sum(1 for i in range(1, 6) if getattr(lineup, f"df{i}_id", None))
+                < req["df"]
+            ):
+                return False
+            if (
+                sum(1 for i in range(1, 6) if getattr(lineup, f"md{i}_id", None))
+                < req["md"]
+            ):
+                return False
+            if (
+                sum(1 for i in range(1, 4) if getattr(lineup, f"at{i}_id", None))
+                < req["at"]
+            ):
+                return False
+            return True
+
+        if not await has_full_lineup(interaction.user.id):
+            return await interaction.followup.send(
+                "You don't have a full lineup!", ephemeral=True
+            )
+        if not await has_full_lineup(opponent.id):
+            return await interaction.followup.send(
+                f"**{opponent.name}** doesn't have a full lineup.", ephemeral=True
+            )
+
+        await interaction.followup.send(
+            f"⚡ {opponent.mention}, you have been challenged to a "
+            f"**Quick Sim** by {interaction.user.mention}!",
+            view=QuickSimAcceptView(interaction.user, opponent, self),
+        )
+
+    # ── Quick Sim live-feed runner ───────────────────────────────
+
+    async def run_quicksim_live(self, interaction, p1, p2):
+        """Run the simulation and live-update a Discord embed every ~3 seconds."""
+        ch = interaction.channel
+
+        # Lock both players
+        ACTIVE_QUICKSIMS[p1.id] = True
+        ACTIVE_QUICKSIMS[p2.id] = True
+
+        try:
+            # Load lineups
+            p1_cards, p1_tactic = await load_lineup_for_sim(p1.id)
+            p2_cards, p2_tactic = await load_lineup_for_sim(p2.id)
+
+            b1 = await get_logo_bonus(p1.id)
+            b2 = await get_logo_bonus(p2.id)
+
+            home = build_team_data(
+                p1_cards, p1.display_name, tactic=p1_tactic, logo_bonus=b1
+            )
+            away = build_team_data(
+                p2_cards, p2.display_name, tactic=p2_tactic, logo_bonus=b2
+            )
+
+            # Run the simulation (instant, pure math)
+            result = simulate_match(home, away)
+
+            # ── Live Feed ─────────────────────────────────────
+            embed = discord.Embed(
+                title="🏟️ MatchDex Quick Sim",
+                description=(
+                    f"**{p1.display_name}** vs **{p2.display_name}**\n\n"
+                    f"📋 Tactics: `{p1_tactic.title()}` vs `{p2_tactic.title()}`\n\n"
+                    "⏱️ Kick off!"
+                ),
+                color=discord.Color.gold(),
+            )
+            embed.set_footer(text="⚡ Quick Sim — Live")
+            msg = await ch.send(embed=embed)
+
+            displayed_events: list[str] = []
+            running_home = 0
+            running_away = 0
+
+            # Batch events: group by ~8 minute windows
+            batches: list[list] = []
+            current_batch: list = []
+            last_minute = 0
+
+            for event in result.events:
+                if event.event_type == "full_time":
+                    if current_batch:
+                        batches.append(current_batch)
+                        current_batch = []
+                    batches.append([event])
+                    continue
+
+                if event.minute - last_minute > 8 and current_batch:
+                    batches.append(current_batch)
+                    current_batch = []
+
+                current_batch.append(event)
+                last_minute = event.minute
+
+            if current_batch:
+                batches.append(current_batch)
+
+            for batch_idx, batch in enumerate(batches):
+                for event in batch:
+                    if event.event_type == "goal":
+                        if event.team_side == "home":
+                            running_home += 1
+                        else:
+                            running_away += 1
+
+                    displayed_events.append(f"`{event.minute}'` {event.text}")
+
+                # Build the updated embed
+                score_line = (
+                    f"**{p1.display_name}** {running_home} - "
+                    f"{running_away} **{p2.display_name}**"
+                )
+
+                visible = displayed_events[-12:]
+                hl_text = "\n".join(visible)
+                if len(displayed_events) > 12:
+                    hl_text = "…\n" + hl_text
+
+                is_final = batch_idx == len(batches) - 1
+
+                if is_final:
+                    embed = discord.Embed(
+                        title="🏟️ MatchDex Quick Sim — Full Time!",
+                        color=discord.Color.red(),
+                    )
+                else:
+                    embed = discord.Embed(
+                        title="🏟️ MatchDex Quick Sim",
+                        color=discord.Color.gold(),
+                    )
+
+                embed.description = score_line + "\n\n" + hl_text
+
+                if not is_final:
+                    embed.set_footer(text="⚡ Quick Sim — Live")
+                else:
+                    embed.set_footer(text="⚡ Quick Sim — Match Over")
+
+                try:
+                    await msg.edit(embed=embed)
+                except discord.HTTPException:
+                    pass
+
+                if not is_final:
+                    await asyncio.sleep(3)
+
+            # ── Awards ────────────────────────────────────────
+            s1, s2 = result.home_score, result.away_score
+
+            async def award(uid, pts, win, draw):
+                u = await DiscordUser.objects.aget(discord_id=uid)
+                u.points += pts
+                if win:
+                    u.wins += 1
+                elif draw:
+                    u.draws += 1
+                else:
+                    u.losses += 1
+                await u.asave()
+                await update_objective_progress(u, "play_match")
+
+            if s1 > s2:
+                result_txt = f"🏆 **{p1.display_name}** wins! (+3 pts)"
+                await award(p1.id, 3, True, False)
+                await award(p2.id, 0, False, False)
+            elif s2 > s1:
+                result_txt = f"🏆 **{p2.display_name}** wins! (+3 pts)"
+                await award(p2.id, 3, True, False)
+                await award(p1.id, 0, False, False)
+            else:
+                result_txt = "🤝 **Draw!** Both get 1 point."
+                await award(p1.id, 1, False, True)
+                await award(p2.id, 1, False, True)
+
+            embed.add_field(name="Result", value=result_txt, inline=False)
+            try:
+                await msg.edit(embed=embed)
+            except discord.HTTPException:
+                pass
+
+        finally:
+            ACTIVE_QUICKSIMS.pop(p1.id, None)
+            ACTIVE_QUICKSIMS.pop(p2.id, None)
+
+
+# ════════════════════════════════════════════════════════════════
+#  QUICK SIM — Views & helpers (module-level, used by MatchCog)
+# ════════════════════════════════════════════════════════════════
+
+
+ACTIVE_QUICKSIMS = {}  # track running sims to prevent duplicates
+
+
+class QuickSimAcceptView(discord.ui.View):
+    def __init__(self, p1: discord.Member, p2: discord.Member, cog: MatchCog):
+        super().__init__(timeout=60)
+        self.p1, self.p2, self.cog = p1, p2, cog
+        self._processing = False
+
+    @discord.ui.button(label="⚡ Accept Quick Sim", style=discord.ButtonStyle.success)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.p2.id:
+            return await interaction.response.send_message(
+                "Only the challenged player can accept!", ephemeral=True
+            )
+        if self._processing:
+            return await interaction.response.send_message(
+                "Already processing…", ephemeral=True
+            )
+        self._processing = True
+        self.stop()
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        await interaction.response.edit_message(view=self)
+        await self.cog.run_quicksim_live(interaction, self.p1, self.p2)
+
+    @discord.ui.button(label="❌ Decline", style=discord.ButtonStyle.secondary)
+    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.p2.id:
+            return await interaction.response.send_message(
+                "Only the challenged player can decline!", ephemeral=True
+            )
+        self.stop()
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        await interaction.response.edit_message(
+            content=f"❌ {self.p2.display_name} declined the Quick Sim challenge.",
+            view=self,
+        )
+
+
+@sync_to_async
+def load_lineup_for_sim(uid):
+    """Load a user's active lineup cards + tactic for the sim engine."""
+    lineup = Lineup.objects.select_related(
+        "gk__template",
+        "df1__template", "df2__template", "df3__template",
+        "df4__template", "df5__template",
+        "md1__template", "md2__template", "md3__template",
+        "md4__template", "md5__template",
+        "at1__template", "at2__template", "at3__template", "at4__template",
+    ).get(owner__discord_id=uid, is_active=True)
+
+    cards = [
+        getattr(lineup, s)
+        for s in [
+            "gk", "df1", "df2", "df3", "df4", "df5",
+            "md1", "md2", "md3", "md4", "md5",
+            "at1", "at2", "at3", "at4",
+        ]
+        if getattr(lineup, s)
+    ]
+    return cards, lineup.tactic
+
 
 async def setup(bot):
     await bot.add_cog(MatchCog(bot))
+

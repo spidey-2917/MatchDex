@@ -205,6 +205,17 @@ class Lineup(TypedModel):
         max_length=20, default="433"
     )  # e.g. 433_attack, 442_diamond
 
+    TACTIC_CHOICES = [
+        ("balanced", "Balanced"),
+        ("attacking", "Attacking"),
+        ("defensive", "Defensive"),
+        ("possession", "Possession"),
+        ("counter", "Counter Attack"),
+    ]
+    tactic = models.CharField(
+        max_length=20, choices=TACTIC_CHOICES, default="balanced"
+    )
+
     # Slots for 11 players
     gk = models.ForeignKey(
         UserCard,

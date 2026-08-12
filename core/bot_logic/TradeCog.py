@@ -686,7 +686,7 @@ class TradeCog(commands.Cog, name="Trading"):
 
         for card in t["initiator_offer"]:
             fresh_card = await UserCard.objects.aget(id=card.id)
-            if fresh_card.owner_id != initiator_db.discord_id:
+            if fresh_card.owner_id != initiator_db.id:
                 continue
 
             fresh_card.owner = receiver_db
@@ -705,7 +705,7 @@ class TradeCog(commands.Cog, name="Trading"):
 
         for card in t["receiver_offer"]:
             fresh_card = await UserCard.objects.aget(id=card.id)
-            if fresh_card.owner_id != receiver_db.discord_id:
+            if fresh_card.owner_id != receiver_db.id:
                 continue
 
             fresh_card.owner = initiator_db
@@ -723,7 +723,7 @@ class TradeCog(commands.Cog, name="Trading"):
             )
 
         db_trade.status = "COMPLETED"
-        db_trade.completed_at = timezone.now()
+        db_trade.completed_at = datetime.now(timezone.utc)
         await db_trade.asave()
 
         await update_objective_progress(initiator_db, "perform_trade")
