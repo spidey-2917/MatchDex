@@ -58,7 +58,10 @@ class ObjectivesCog(commands.Cog, name="Objectives"):
                                 item.disabled = True
                                 item.style = discord.ButtonStyle.secondary
                                 item.label = "Claimed"
-                        await intx.message.edit(view=view)
+                        try:
+                            await intx.message.edit(view=view)
+                        except discord.NotFound:
+                            pass
                     else:
                         await intx.response.send_message("❌ Could not claim reward. You may have already claimed it.", ephemeral=True)
                         

@@ -254,7 +254,10 @@ class SpawningCog(commands.Cog, name="Spawning"):
             msg = await channel.send(file=file, embed=embed, view=view)
             view.message = msg
         except discord.Forbidden as e:
-            log.error(f"Failed to spawn card in guild {channel.guild.id} channel {channel.id} due to Missing Permissions: {e}")
+            if e.code in (50001, 50013):
+                log.warning(f"Skipping spawn in guild {channel.guild.id} channel {channel.id} due to missing permissions ({e.code}).")
+            else:
+                log.error(f"Failed to spawn card in guild {channel.guild.id} channel {channel.id} due to Missing Permissions: {e}")
         except discord.HTTPException as e:
             log.error(f"Failed to spawn card in guild {channel.guild.id} channel {channel.id} due to HTTP error: {e}")
 
