@@ -832,7 +832,7 @@ class MatchCog(commands.Cog, name="Matches"):
             # Batch events: group by ~8 minute windows
             batches: list[list] = []
             current_batch: list = []
-            last_minute = 0
+            batch_start_minute = 0
 
             for event in result.events:
                 if event.event_type == "full_time":
@@ -842,12 +842,12 @@ class MatchCog(commands.Cog, name="Matches"):
                     batches.append([event])
                     continue
 
-                if event.minute - last_minute > 8 and current_batch:
+                if event.minute - batch_start_minute > 8 and current_batch:
                     batches.append(current_batch)
                     current_batch = []
+                    batch_start_minute = event.minute
 
                 current_batch.append(event)
-                last_minute = event.minute
 
             if current_batch:
                 batches.append(current_batch)
