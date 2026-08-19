@@ -763,7 +763,7 @@ class MatchCog(commands.Cog, name="Matches"):
             ):
                 return False
             if (
-                sum(1 for i in range(1, 4) if getattr(lineup, f"at{i}_id", None))
+                sum(1 for i in range(1, 5) if getattr(lineup, f"at{i}_id", None))
                 < req["at"]
             ):
                 return False
@@ -784,6 +784,27 @@ class MatchCog(commands.Cog, name="Matches"):
             view=QuickSimAcceptView(interaction.user, opponent, self),
         )
 
+    @app_commands.command(
+        name="sim_trophies",
+        description="View your or another user's Quick Sim trophies"
+    )
+    async def sim_trophies(self, interaction: discord.Interaction, member: discord.Member | None = None):
+        target = member or interaction.user
+        
+        from core.models import SimSeason, SimSeasonPlayer
+        active_season = await SimSeason.objects.filter(is_active=True).afirst()
+        if not active_season:
+            return await interaction.response.send_message("There is no active Quick Sim season.", ephemeral=True)
+            
+        sp, _ = await SimSeasonPlayer.objects.aget_or_create(user_id=target.id, season=active_season, defaults={'trophies': 1000})
+        
+        embed = discord.Embed(
+            title=f"🏆 {target.display_name}'s Trophies",
+            description=f"**{sp.trophies}** Trophies\nWins: {sp.wins} | Losses: {sp.losses} | Draws: {sp.draws}",
+            color=discord.Color.blue()
+        )
+        await interaction.response.send_message(embed=embed)
+
     # ── Quick Sim live-feed runner ───────────────────────────────
 
     async def run_quicksim_live(self, interaction, p1, p2):
@@ -795,6 +816,17 @@ class MatchCog(commands.Cog, name="Matches"):
         ACTIVE_QUICKSIMS[p2.id] = True
 
         try:
+            from core.models import SimSeason, SimSeasonPlayer
+            active_season = await SimSeason.objects.filter(is_active=True).afirst()
+            if active_season:
+                sp1, _ = await SimSeasonPlayer.objects.aget_or_create(user_id=p1.id, season=active_season, defaults={'trophies': 1000})
+                sp2, _ = await SimSeasonPlayer.objects.aget_or_create(user_id=p2.id, season=active_season, defaults={'trophies': 1000})
+                p1_trophies = sp1.trophies
+                p2_trophies = sp2.trophies
+            else:
+                p1_trophies = "N/A"
+                p2_trophies = "N/A"
+
             # Load lineups
             p1_cards, p1_tactic = await load_lineup_for_sim(p1.id)
             p2_cards, p2_tactic = await load_lineup_for_sim(p2.id)
@@ -816,7 +848,7 @@ class MatchCog(commands.Cog, name="Matches"):
             embed = discord.Embed(
                 title="🏟️ MatchDex Quick Sim",
                 description=(
-                    f"**{p1.display_name}** vs **{p2.display_name}**\n\n"
+                    f"**{p1.display_name}** ({p1_trophies} 🏆) vs ({p2_trophies} 🏆) **{p2.display_name}**\n\n"
                     f"📋 Tactics: `{p1_tactic.title()}` vs `{p2_tactic.title()}`\n\n"
                     "⏱️ Kick off!"
                 ),
@@ -864,8 +896,8 @@ class MatchCog(commands.Cog, name="Matches"):
 
                 # Build the updated embed
                 score_line = (
-                    f"**{p1.display_name}** {running_home} - "
-                    f"{running_away} **{p2.display_name}**"
+                    f"**{p1.display_name}** ({p1_trophies} 🏆) {running_home} - "
+                    f"{running_away} ({p2_trophies} 🏆) **{p2.display_name}**"
                 )
 
                 visible = displayed_events[-12:]

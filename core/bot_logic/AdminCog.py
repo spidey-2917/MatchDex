@@ -107,10 +107,11 @@ class AdminCog(commands.Cog, name="Admin"):
         count="Number of cards to spawn (1-15)",
         event="Filter spawns to a specific event (optional)",
         min_ovr="Minimum OVR for spawns (optional)",
-        max_ovr="Maximum OVR for spawns (optional)"
+        max_ovr="Maximum OVR for spawns (optional)",
+        premium="Spawn Premium cards only"
     )
     @app_commands.autocomplete(event=event_autocomplete)
-    async def spawn_random(self, interaction: discord.Interaction, count: int = 5, event: str | None = None, min_ovr: int | None = None, max_ovr: int | None = None):
+    async def spawn_random(self, interaction: discord.Interaction, count: int = 5, event: str | None = None, min_ovr: int | None = None, max_ovr: int | None = None, premium: bool = False):
         if not await self.check_admin(interaction):
             return
 
@@ -142,6 +143,8 @@ class AdminCog(commands.Cog, name="Admin"):
                     qs = CardTemplate.objects.filter(ovr__gte=min_ovr, ovr__lte=max_ovr)
                     if event:
                         qs = qs.filter(event_name__icontains=event)
+                    if premium:
+                        qs = qs.filter(card_type="PREMIUM")
                     if not qs.exists():
                         return None
                         
@@ -164,7 +167,8 @@ class AdminCog(commands.Cog, name="Admin"):
                     "PACK",
                     event_name_filter=event,
                     min_ovr_filter=min_ovr,
-                    max_ovr_filter=max_ovr
+                    max_ovr_filter=max_ovr,
+                    card_type_filter="PREMIUM" if premium else None
                 )
                 
             if not card:

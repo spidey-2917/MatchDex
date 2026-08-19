@@ -51,55 +51,90 @@ class TradeActionView(discord.ui.View):
         self.trade_id = trade_id
         self.cog = cog
         self._processing = False
-        # Overwrite custom IDs for persistence across bot restarts
+        
+        self.lock_btn.custom_id = f"lock_{trade_id}"
         self.confirm_btn.custom_id = f"conf_{trade_id}"
         self.cancel_btn.custom_id = f"canc_{trade_id}"
 
-    @discord.ui.button(
-        label="Lock In (0/2)", style=discord.ButtonStyle.success, emoji="✅"
-    )
-    async def confirm_btn(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
+        t = ACTIVE_TRADES.get(trade_id)
+        if t:
+            locks = sum([t.get("initiator_locked", False), t.get("receiver_locked", False)])
+            self.lock_btn.label = f"Lock ({locks}/2)"
+            if locks < 2:
+                self.remove_item(self.confirm_btn)
+            else:
+                confirms = sum([t.get("initiator_final", False), t.get("receiver_final", False)])
+                self.confirm_btn.label = f"Confirm Trade ({confirms}/2)"
+                self.remove_item(self.lock_btn)
+
+    @discord.ui.button(label="Lock (0/2)", style=discord.ButtonStyle.primary, emoji="🔒")
+    async def lock_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self._processing:
-            return await interaction.response.send_message(
-                "Already processing…", ephemeral=True
-            )
+            return await interaction.response.send_message("Already processing…", ephemeral=True)
         self._processing = True
         await interaction.response.defer(ephemeral=True)
         t = ACTIVE_TRADES.get(self.trade_id)
         if not t:
-            return await interaction.followup.send(
-                "Trade not found or expired.", ephemeral=True
-            )
+            return await interaction.followup.send("Trade not found or expired.", ephemeral=True)
 
         if interaction.user.id not in (t["initiator"].id, t["receiver"].id):
-            return await interaction.followup.send(
-                "You are not part of this trade.", ephemeral=True
-            )
+            return await interaction.followup.send("You are not part of this trade.", ephemeral=True)
 
-        if interaction.user.id == t["initiator"].id:
-            t["initiator_confirm"] = True
+        is_initiator = interaction.user.id == t["initiator"].id
+        if (is_initiator and t.get("initiator_locked")) or (not is_initiator and t.get("receiver_locked")):
+            self._processing = False
+            return await interaction.followup.send("You have already locked your offer.", ephemeral=True)
+
+        if is_initiator:
+            t["initiator_locked"] = True
         else:
-            t["receiver_confirm"] = True
-
-        confirms = sum([t["initiator_confirm"], t["receiver_confirm"]])
-        button.label = f"Lock In ({confirms}/2)"
+            t["receiver_locked"] = True
 
         await self.cog.save_trade_state(self.trade_id)
-        await t["message"].edit(
-            embed=self.cog.build_trade_embed(self.trade_id), view=self
-        )
-        await interaction.followup.send(
-            "You have locked in your offer.", ephemeral=True
-        )
+        
+        view = TradeActionView(self.trade_id, self.cog)
+        await t["message"].edit(embed=self.cog.build_trade_embed(self.trade_id), view=view)
+        await interaction.followup.send("You have locked in your offer.", ephemeral=True)
+        self._processing = False
 
-        if t["initiator_confirm"] and t["receiver_confirm"]:
+    @discord.ui.button(label="Confirm Trade (0/2)", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self._processing:
+            return await interaction.response.send_message("Already processing…", ephemeral=True)
+        self._processing = True
+        await interaction.response.defer(ephemeral=True)
+        t = ACTIVE_TRADES.get(self.trade_id)
+        if not t:
+            return await interaction.followup.send("Trade not found or expired.", ephemeral=True)
+
+        if interaction.user.id not in (t["initiator"].id, t["receiver"].id):
+            return await interaction.followup.send("You are not part of this trade.", ephemeral=True)
+
+        is_initiator = interaction.user.id == t["initiator"].id
+        if (is_initiator and t.get("initiator_final")) or (not is_initiator and t.get("receiver_final")):
+            self._processing = False
+            return await interaction.followup.send("You have already confirmed the trade.", ephemeral=True)
+
+        if is_initiator:
+            t["initiator_final"] = True
+        else:
+            t["receiver_final"] = True
+
+        confirms = sum([t.get("initiator_final", False), t.get("receiver_final", False)])
+        
+        await self.cog.save_trade_state(self.trade_id)
+
+        if confirms == 2:
             for child in self.children:
-                if isinstance(child, (discord.ui.Button, discord.ui.Select)):
+                if hasattr(child, "disabled"):
                     child.disabled = True
             await t["message"].edit(view=self)
             await self.cog.execute_trade(self.trade_id)
+        else:
+            view = TradeActionView(self.trade_id, self.cog)
+            await t["message"].edit(embed=self.cog.build_trade_embed(self.trade_id), view=view)
+            await interaction.followup.send("You have confirmed the trade.", ephemeral=True)
+            
         self._processing = False
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="❌")
@@ -197,8 +232,8 @@ class TradeBulkAddView(CardListView):
         if not t:
             return await interaction.followup.send("Trade not found or expired.", ephemeral=True)
 
-        t["initiator_confirm"] = False
-        t["receiver_confirm"] = False
+        if (interaction.user.id == t["initiator"].id and t.get("initiator_locked")) or (interaction.user.id == t["receiver"].id and t.get("receiver_locked")):
+            return await interaction.followup.send("You have locked your offer. Cancel the trade if you want to make changes.", ephemeral=True)
 
         offer_list = t["initiator_offer"] if interaction.user.id == t["initiator"].id else t["receiver_offer"]
         
@@ -308,8 +343,10 @@ class TradeCog(commands.Cog, name="Trading"):
                     "receiver": receiver,
                     "initiator_offer": await get_cards(initiator_offer_ids),
                     "receiver_offer": await get_cards(receiver_offer_ids),
-                    "initiator_confirm": state_data.get("initiator_confirm", False),
-                    "receiver_confirm": state_data.get("receiver_confirm", False),
+                    "initiator_locked": state_data.get("initiator_locked", False),
+                    "receiver_locked": state_data.get("receiver_locked", False),
+                    "initiator_final": state_data.get("initiator_final", False),
+                    "receiver_final": state_data.get("receiver_final", False),
                     "channel": channel,
                     "message": message,
                     "last_activity": datetime.now(timezone.utc),
@@ -355,8 +392,10 @@ class TradeCog(commands.Cog, name="Trading"):
         db_trade.state_data = {
             "initiator_offer": [c.card_id for c in t["initiator_offer"]],
             "receiver_offer": [c.card_id for c in t["receiver_offer"]],
-            "initiator_confirm": t["initiator_confirm"],
-            "receiver_confirm": t["receiver_confirm"],
+            "initiator_locked": t.get("initiator_locked", False),
+            "receiver_locked": t.get("receiver_locked", False),
+            "initiator_final": t.get("initiator_final", False),
+            "receiver_final": t.get("receiver_final", False),
         }
         t["last_activity"] = datetime.now(timezone.utc)
         await db_trade.asave()
@@ -374,8 +413,10 @@ class TradeCog(commands.Cog, name="Trading"):
             "receiver": receiver,
             "initiator_offer": [],
             "receiver_offer": [],
-            "initiator_confirm": False,
-            "receiver_confirm": False,
+            "initiator_locked": False,
+            "receiver_locked": False,
+            "initiator_final": False,
+            "receiver_final": False,
             "channel": channel,
             "message": None,
             "last_activity": datetime.now(timezone.utc),
@@ -410,8 +451,11 @@ class TradeCog(commands.Cog, name="Trading"):
             initiator_text += f"... and {len(t['initiator_offer']) - 10} more."
         if not t["initiator_offer"]:
             initiator_text += "Nothing yet."
-        if t["initiator_confirm"]:
-            initiator_text += "\n\n✅ **READY**"
+        if t.get("initiator_locked"):
+            if t.get("initiator_final"):
+                initiator_text += "\n\n✅ **CONFIRMED**"
+            else:
+                initiator_text += "\n\n🔒 **LOCKED**"
 
         receiver_text = f"**{len(t['receiver_offer'])} Cards Offered**\n"
         for i, card in enumerate(t["receiver_offer"][:10]):
@@ -420,8 +464,11 @@ class TradeCog(commands.Cog, name="Trading"):
             receiver_text += f"... and {len(t['receiver_offer']) - 10} more."
         if not t["receiver_offer"]:
             receiver_text += "Nothing yet."
-        if t["receiver_confirm"]:
-            receiver_text += "\n\n✅ **READY**"
+        if t.get("receiver_locked"):
+            if t.get("receiver_final"):
+                receiver_text += "\n\n✅ **CONFIRMED**"
+            else:
+                receiver_text += "\n\n🔒 **LOCKED**"
 
         embed.add_field(
             name=t["initiator"].display_name, value=initiator_text, inline=True
@@ -431,7 +478,7 @@ class TradeCog(commands.Cog, name="Trading"):
             name=t["receiver"].display_name, value=receiver_text, inline=True
         )
 
-        if t["initiator_confirm"] and t["receiver_confirm"]:
+        if t.get("initiator_final") and t.get("receiver_final"):
             embed.color = discord.Color.green()
         else:
             embed.color = discord.Color.gold()
@@ -515,8 +562,8 @@ class TradeCog(commands.Cog, name="Trading"):
                 "You are not in an active trade.", ephemeral=True
             )
 
-        t["initiator_confirm"] = False
-        t["receiver_confirm"] = False
+        if (interaction.user.id == t["initiator"].id and t.get("initiator_locked")) or (interaction.user.id == t["receiver"].id and t.get("receiver_locked")):
+            return await interaction.followup.send("You have locked your offer. Cancel the trade if you want to make changes.", ephemeral=True)
 
         try:
             card = await UserCard.objects.select_related("template").aget(
@@ -565,8 +612,8 @@ class TradeCog(commands.Cog, name="Trading"):
                 "You are not in an active trade.", ephemeral=True
             )
 
-        t["initiator_confirm"] = False
-        t["receiver_confirm"] = False
+        if (interaction.user.id == t["initiator"].id and t.get("initiator_locked")) or (interaction.user.id == t["receiver"].id and t.get("receiver_locked")):
+            return await interaction.followup.send("You have locked your offer. Cancel the trade if you want to make changes.", ephemeral=True)
 
         offer_list = (
             t["initiator_offer"]
@@ -686,7 +733,7 @@ class TradeCog(commands.Cog, name="Trading"):
 
         for card in t["initiator_offer"]:
             fresh_card = await UserCard.objects.aget(id=card.id)
-            if fresh_card.owner_id != initiator_db.id:
+            if fresh_card.owner_id != initiator_db.discord_id:
                 continue
 
             fresh_card.owner = receiver_db
@@ -705,7 +752,7 @@ class TradeCog(commands.Cog, name="Trading"):
 
         for card in t["receiver_offer"]:
             fresh_card = await UserCard.objects.aget(id=card.id)
-            if fresh_card.owner_id != receiver_db.id:
+            if fresh_card.owner_id != receiver_db.discord_id:
                 continue
 
             fresh_card.owner = initiator_db

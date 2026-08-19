@@ -165,3 +165,9 @@ cython_debug/
 *.tar.gz
 *.zip
 matchdex_backup*
+
+# Error and log text files
+docker_logs.txt
+extracted_errors.txt
+organized_errors.txt
+parsed_errors.txt
