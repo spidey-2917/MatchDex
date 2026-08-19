@@ -239,7 +239,15 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
                     # Absolute last resort: any card template at all!
                     qs = CardTemplate.objects.all()
                     
-        return qs.annotate(num_owned=models.Count('usercard')).order_by('num_owned', '?').first()
+        random_card = qs.order_by("?").first()
+        if random_card:
+            similar_cards = qs.filter(
+                rarity=random_card.rarity,
+                ovr=random_card.ovr,
+                card_type=random_card.card_type
+            )
+            return similar_cards.annotate(num_owned=models.Count('usercard')).order_by('num_owned', '?').first()
+        return None
     else:
         # mode == 'OVR'
         chosen_range = random.choices(weights, weights=[w[2] for w in weights], k=1)[0]
@@ -268,7 +276,15 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
                     # Absolute last resort: any card template at all!
                     qs = CardTemplate.objects.all()
                     
-        return qs.annotate(num_owned=models.Count('usercard')).order_by('num_owned', '?').first()
+        random_card = qs.order_by("?").first()
+        if random_card:
+            similar_cards = qs.filter(
+                rarity=random_card.rarity,
+                ovr=random_card.ovr,
+                card_type=random_card.card_type
+            )
+            return similar_cards.annotate(num_owned=models.Count('usercard')).order_by('num_owned', '?').first()
+        return None
 
 
 def get_random_rarity():
