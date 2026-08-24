@@ -773,11 +773,12 @@ class TradeCog(commands.Cog, name="Trading"):
         db_trade.completed_at = datetime.now(timezone.utc)
         await db_trade.asave()
 
-        await TradeObjectiveLog.objects.acreate(trade=db_trade, user=initiator_db)
-        await update_objective_progress(initiator_db, "perform_trade")
-        
-        await TradeObjectiveLog.objects.acreate(trade=db_trade, user=receiver_db)
-        await update_objective_progress(receiver_db, "perform_trade")
+        if t["initiator_offer"] or t["receiver_offer"]:
+            await TradeObjectiveLog.objects.acreate(trade=db_trade, user=initiator_db)
+            await update_objective_progress(initiator_db, "perform_trade")
+            
+            await TradeObjectiveLog.objects.acreate(trade=db_trade, user=receiver_db)
+            await update_objective_progress(receiver_db, "perform_trade")
 
         embed = discord.Embed(
             title="🎉 Trade Completed successfully!",

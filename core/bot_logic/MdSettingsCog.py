@@ -425,7 +425,9 @@ class MdSettingsCog(commands.Cog, name="Settings"):
                     except:
                         pass
             if not target_db:
-                target_db = await DiscordUser.objects.filter(username__iexact=user).afirst()
+                target_db = await DiscordUser.objects.filter(username__istartswith=user).afirst()
+            if not target_db:
+                target_db = await DiscordUser.objects.filter(username__icontains=user).afirst()
 
             if not target_db:
                 return await interaction.response.send_message(f"User '{user}' not found.", ephemeral=True)

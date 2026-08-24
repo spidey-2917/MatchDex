@@ -284,24 +284,28 @@ class WagerArena(discord.ui.View):
         # Part 3: Transfer logic DB
         cards_to_transfer = self.stakes[loser_key]
 
-        if cards_to_transfer:
+        @sync_to_async
+        def get_wager_users():
+            return DiscordUser.objects.get(discord_id=winner_user.id), DiscordUser.objects.get(discord_id=loser_user.id)
+            
+        winner_db, loser_db = await get_wager_users()
 
+        if cards_to_transfer:
             @sync_to_async
             def do_transfer():
-                winner_db_user = DiscordUser.objects.get(discord_id=winner_user.id)
-                loser_db_user = DiscordUser.objects.get(discord_id=loser_user.id)
                 for card in cards_to_transfer:
-                    card.owner = winner_db_user
+                    card.owner = winner_db
                     card.save()
-                return winner_db_user, loser_db_user
 
-            winner_db, loser_db = await do_transfer()
-            await update_objective_progress(winner_db, "play_wager")
-            await update_objective_progress(loser_db, "play_wager")
+            await do_transfer()
             
             from core.utils import clear_card_from_lineups
             for card in cards_to_transfer:
                 await clear_card_from_lineups(card.id)
+
+        if self.stakes["A"] or self.stakes["B"]:
+            await update_objective_progress(winner_db, "play_wager")
+            await update_objective_progress(loser_db, "play_wager")
 
         self.status += f"\n\n🏆 **{winner_user.mention} WINS THE SHOWDOWN!** 🏆\nAll staked cards have been transferred to the winner."
         self.end_wager_state()

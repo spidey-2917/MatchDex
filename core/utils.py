@@ -153,7 +153,7 @@ def get_fallback_rarities(rolled_rarity):
     return fallback_sequence
 
 
-def pick_random_card(category, card_type_filter=None, event_name_filter=None, min_ovr_filter=None, max_ovr_filter=None):
+def pick_random_card(category, card_type_filter=None, event_name_filter=None, min_ovr_filter=None, max_ovr_filter=None, strict=False):
     """
     Pick a random card based on the current drop rate configuration.
 
@@ -167,7 +167,7 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
     def _apply_extra_filters(qs):
         """Apply the caller-supplied event/OVR filters to a queryset."""
         if event_name_filter:
-            qs = qs.filter(event_name__icontains=event_name_filter)
+            qs = qs.filter(event_name__iexact=event_name_filter)
         if min_ovr_filter is not None:
             qs = qs.filter(ovr__gte=min_ovr_filter)
         if max_ovr_filter is not None:
@@ -221,7 +221,7 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
                 qs = candidate_qs
                 break
                 
-        if not qs:
+        if not qs and not strict:
             # First fallback: keep chosen_type but ignore rarity
             fallback_qs = CardTemplate.objects.filter(
                 card_type=chosen_type
@@ -239,6 +239,8 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
                     # Absolute last resort: any card template at all!
                     qs = CardTemplate.objects.all()
                     
+        if not qs:
+            return None
         random_card = qs.order_by("?").first()
         if random_card:
             similar_cards = qs.filter(
@@ -258,7 +260,7 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
             ovr__lte=max_ovr,
         )
         qs = _apply_extra_filters(qs)
-        if not qs.exists():
+        if not qs.exists() and not strict:
             # First fallback: keep chosen_type but ignore OVR range
             fallback_qs = CardTemplate.objects.filter(
                 card_type=chosen_type
@@ -276,6 +278,8 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
                     # Absolute last resort: any card template at all!
                     qs = CardTemplate.objects.all()
                     
+        if not qs.exists():
+            return None
         random_card = qs.order_by("?").first()
         if random_card:
             similar_cards = qs.filter(

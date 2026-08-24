@@ -142,7 +142,7 @@ class AdminCog(commands.Cog, name="Admin"):
                 def _pick_dynamic_ovr():
                     qs = CardTemplate.objects.filter(ovr__gte=min_ovr, ovr__lte=max_ovr)
                     if event:
-                        qs = qs.filter(event_name__icontains=event)
+                        qs = qs.filter(event_name__iexact=event)
                     if premium:
                         qs = qs.filter(card_type="PREMIUM")
                     if not qs.exists():
@@ -168,11 +168,13 @@ class AdminCog(commands.Cog, name="Admin"):
                     event_name_filter=event,
                     min_ovr_filter=min_ovr,
                     max_ovr_filter=max_ovr,
-                    card_type_filter="PREMIUM" if premium else None
+                    card_type_filter="PREMIUM" if premium else None,
+                    strict=True
                 )
                 
             if not card:
-                continue
+                await interaction.followup.send(f"Error: Could not find any card matching the criteria (Event: {event}, OVR: {min_ovr}-{max_ovr}).", ephemeral=True)
+                break
 
             image_buffer = await asyncio.to_thread(generate_card_image, card)
             file = discord.File(fp=image_buffer, filename=f"{card.name}.png")
