@@ -196,9 +196,10 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
         else:
             chosen_type = card_type_filter
     else:
-        # If an event_name_filter is supplied, use EVENT type automatically
+        # If an event_name_filter is supplied, don't restrict card_type —
+        # let the event_name alone narrow results (cards may be any type).
         if event_name_filter:
-            chosen_type = "EVENT"
+            chosen_type = None
         else:
             chosen_type = random.choices(["BASE", "ICON", "EVENT"], weights=[90, 7, 3], k=1)[0]
 
@@ -214,8 +215,12 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
         qs = None
         for r_candidate in fallback_rarities:
             candidate_qs = CardTemplate.objects.filter(
-                card_type=chosen_type, rarity=r_candidate
+                rarity=r_candidate
             ).filter(rarity__in=spawnable_rarities)
+            if chosen_type:
+                candidate_qs = candidate_qs.filter(card_type=chosen_type)
+            else:
+                candidate_qs = candidate_qs.exclude(card_type="PREMIUM")
             candidate_qs = _apply_extra_filters(candidate_qs)
             if candidate_qs.exists():
                 qs = candidate_qs
@@ -223,9 +228,11 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
                 
         if not qs and not strict:
             # First fallback: keep chosen_type but ignore rarity
-            fallback_qs = CardTemplate.objects.filter(
-                card_type=chosen_type
-            )
+            fallback_qs = CardTemplate.objects.all()
+            if chosen_type:
+                fallback_qs = fallback_qs.filter(card_type=chosen_type)
+            else:
+                fallback_qs = fallback_qs.exclude(card_type="PREMIUM")
             fallback_qs = _apply_extra_filters(fallback_qs)
             if fallback_qs.exists():
                 qs = fallback_qs
@@ -255,16 +262,21 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
         chosen_range = random.choices(weights, weights=[w[2] for w in weights], k=1)[0]
         min_ovr, max_ovr = chosen_range[0], chosen_range[1]
         qs = CardTemplate.objects.filter(
-            card_type=chosen_type,
             ovr__gte=min_ovr,
             ovr__lte=max_ovr,
         )
+        if chosen_type:
+            qs = qs.filter(card_type=chosen_type)
+        else:
+            qs = qs.exclude(card_type="PREMIUM")
         qs = _apply_extra_filters(qs)
         if not qs.exists() and not strict:
             # First fallback: keep chosen_type but ignore OVR range
-            fallback_qs = CardTemplate.objects.filter(
-                card_type=chosen_type
-            )
+            fallback_qs = CardTemplate.objects.all()
+            if chosen_type:
+                fallback_qs = fallback_qs.filter(card_type=chosen_type)
+            else:
+                fallback_qs = fallback_qs.exclude(card_type="PREMIUM")
             fallback_qs = _apply_extra_filters(fallback_qs)
             if fallback_qs.exists():
                 qs = fallback_qs

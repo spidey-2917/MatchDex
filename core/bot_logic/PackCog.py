@@ -384,22 +384,6 @@ class PackCog(commands.Cog, name="Packs"):
                 "You don't have any of these packs in your wallet!", ephemeral=True
             )
         
-        if pack_obj.is_premium_only and not user.is_premium:
-            # Check for premium role
-            has_premium_role = False
-            if isinstance(interaction.user, discord.Member):
-                from core.models import PremiumRole
-                premium_role_ids = set()
-                async for pr in PremiumRole.objects.all():
-                    premium_role_ids.add(pr.role_id)
-                has_premium_role = any(
-                    role.id in premium_role_ids for role in interaction.user.roles
-                )
-            if not has_premium_role:
-                return await interaction.response.send_message(
-                    "This pack is only for Premium members!", ephemeral=True
-                )
-                
         # Card type filter logic
         c_filter = None
         if pack_obj.card_type_filter != "ANY":
