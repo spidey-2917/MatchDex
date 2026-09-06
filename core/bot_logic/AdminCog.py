@@ -162,10 +162,31 @@ class AdminCog(commands.Cog, name="Admin"):
                     return random.choices(cards, weights=weights, k=1)[0]
                 
                 card = await _pick_dynamic_ovr()
+            elif event:
+                # Event-filtered spawn: pick directly from matching cards
+                # using dynamic OVR-based weighting (same approach as OVR-range path).
+                # This avoids the rarity-roll pipeline which almost never lands on
+                # the high rarities that event cards typically have.
+                @sync_to_async
+                def _pick_event_card():
+                    qs = CardTemplate.objects.filter(event_name__iexact=event)
+                    if premium:
+                        qs = qs.filter(card_type="PREMIUM")
+                    if not qs.exists():
+                        return None
+
+                    cards = list(qs)
+                    ovr_values = [c.ovr for c in cards]
+                    lo, hi = min(ovr_values), max(ovr_values)
+                    denom = max(1, hi - lo)
+                    weights = [100 ** ((hi - c.ovr) / denom) for c in cards]
+                    return random.choices(cards, weights=weights, k=1)[0]
+
+                card = await _pick_event_card()
             else:
                 card = await sync_to_async(pick_random_card)(
                     "PACK",
-                    event_name_filter=event,
+                    event_name_filter=None,
                     min_ovr_filter=min_ovr,
                     max_ovr_filter=max_ovr,
                     card_type_filter="PREMIUM" if premium else None,
