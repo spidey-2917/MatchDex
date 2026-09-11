@@ -89,33 +89,51 @@ class CardTemplate(TypedModel):
     ]
 
     RARITIES = [
-        ("Common I", "Common I (Weight: 0.3, 42.9% of Common)"),
-        ("Common II", "Common II (Weight: 0.25, 35.7% of Common)"),
-        ("Common III", "Common III (Weight: 0.15, 21.4% of Common)"),
-        ("Uncommon I", "Uncommon I (Weight: 0.1, 50.0% of Uncommon)"),
-        ("Uncommon II", "Uncommon II (Weight: 0.06, 30.0% of Uncommon)"),
-        ("Uncommon III", "Uncommon III (Weight: 0.04, 20.0% of Uncommon)"),
-        ("Rare I", "Rare I (Weight: 0.04, 50.0% of Rare)"),
-        ("Rare II", "Rare II (Weight: 0.025, 31.3% of Rare)"),
-        ("Rare III", "Rare III (Weight: 0.015, 18.8% of Rare)"),
-        ("Epic I", "Epic I (Weight: 0.007, 46.7% of Epic)"),
-        ("Epic II", "Epic II (Weight: 0.005, 33.3% of Epic)"),
-        ("Epic III", "Epic III (Weight: 0.003, 20.0% of Epic)"),
-        ("Legendary I", "Legendary I (Weight: 0.0025, 50.0% of Legendary)"),
-        ("Legendary II", "Legendary II (Weight: 0.0020, 40.0% of Legendary)"),
-        ("Legendary III", "Legendary III (Weight: 0.0005, 10.0% of Legendary)"),
+        ("Common I", "Common I (11.00%)"),
+        ("Common II", "Common II (10.50%)"),
+        ("Common III", "Common III (8.50%)"),
+        ("Uncommon I", "Uncommon I (8.40%)"),
+        ("Uncommon II", "Uncommon II (8.35%)"),
+        ("Uncommon III", "Uncommon III (8.25%)"),
+        ("Rare I", "Rare I (7.00%)"),
+        ("Rare II", "Rare II (6.70%)"),
+        ("Rare III", "Rare III (6.30%)"),
+        ("Elite I", "Elite I (5.00%)"),
+        ("Elite II", "Elite II (4.70%)"),
+        ("Elite III", "Elite III (4.30%)"),
+        ("Epic I", "Epic I (2.50%)"),
+        ("Epic II", "Epic II (2.00%)"),
+        ("Epic III", "Epic III (1.50%)"),
+        ("Legendary I", "Legendary I (1.40%)"),
+        ("Legendary II", "Legendary II (1.35%)"),
+        ("Legendary III", "Legendary III (1.25%)"),
+        ("Mythic I", "Mythic I (0.40%)"),
+        ("Mythic II", "Mythic II (0.30%)"),
+        ("Mythic III", "Mythic III (0.20%)"),
+        ("Ultimate I", "Ultimate I (0.06%)"),
+        ("Ultimate II", "Ultimate II (0.03%)"),
+        ("Ultimate III", "Ultimate III (0.01%)"),
         ("Premium", "Premium"),
+    ]
+
+    PREMIUM_TYPES = [
+        ("CUSTOM", "Custom"),
+        ("SBC", "SBC"),
+        ("PAID", "Paid"),
     ]
 
     name = models.CharField(max_length=100)
     position = models.CharField(max_length=5, choices=POSITIONS)
     attack_stat = models.IntegerField()
     defence_stat = models.IntegerField()
+    attack_boost_pct = models.IntegerField(default=0, help_text="Percentage boost for attack (e.g. 5 for 5%)")
+    defence_boost_pct = models.IntegerField(default=0, help_text="Percentage boost for defence")
     ovr = models.IntegerField(blank=True, null=True)
     rarity = models.CharField(max_length=20, choices=RARITIES, blank=True)
     event_name = models.CharField(max_length=100, default="Base")
     club = models.CharField(max_length=100)
     card_type = models.CharField(max_length=10, choices=CARD_TYPES, default="BASE")
+    premium_type = models.CharField(max_length=10, choices=PREMIUM_TYPES, blank=True, null=True, help_text="Backend only classification for Premium cards")
     image_base = models.ImageField(upload_to="card_templates/", blank=True, null=True)
 
     @property
@@ -755,4 +773,28 @@ class TradeObjectiveLog(TypedModel):
 
     def __str__(self):
         return f"Trade #{self.trade.id} - {self.user.username}"
+
+
+class Manager(TypedModel):
+    name = models.CharField(max_length=100)
+    nationality = models.CharField(max_length=100, blank=True, null=True)
+    preferred_formation = models.CharField(max_length=20, default="433", help_text="Preferred formation e.g. 433")
+    
+    BOOST_CHOICES = [
+        ("ATTACKING", "Attacking"),
+        ("DEFENCE", "Defence"),
+        ("COUNTER_ATTACKING", "Counter Attacking")
+    ]
+    boost_type = models.CharField(max_length=20, choices=BOOST_CHOICES, default="ATTACKING")
+    
+    def __str__(self):
+        return f"{self.name} ({self.preferred_formation})"
+
+
+class UserManager(TypedModel):
+    owner = models.OneToOneField(DiscordUser, on_delete=models.CASCADE, related_name="equipped_manager")
+    manager = models.ForeignKey(Manager, on_delete=models.CASCADE)
+    
+    def __str__(self):
+        return f"{self.owner.username}'s Manager: {self.manager.name}"
 

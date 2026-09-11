@@ -136,62 +136,24 @@ class AdminCog(commands.Cog, name="Admin"):
 
         spawned = 0
         for _ in range(count):
-            if min_ovr is not None and max_ovr is not None:
-                # Custom dynamic weighted spawn based on OVR range
-                @sync_to_async
-                def _pick_dynamic_ovr():
-                    qs = CardTemplate.objects.filter(ovr__gte=min_ovr, ovr__lte=max_ovr)
-                    if event:
-                        qs = qs.filter(event_name__iexact=event)
-                    if premium:
-                        qs = qs.filter(card_type="PREMIUM")
-                    if not qs.exists():
-                        return None
-                        
-                    cards = list(qs)
-                    weights = []
-                    # Dynamic weight: exponential decay based on OVR
-                    # The higher the OVR, the lower the weight. 
-                    denom = max(1, max_ovr - min_ovr)
-                    for c in cards:
-                        # e.g., if max_ovr=90, min_ovr=70, denom=20
-                        # c.ovr=70 -> weight=100**(20/20) = 100
-                        # c.ovr=80 -> weight=100**(10/20) = 10
-                        # c.ovr=90 -> weight=100**(0/20) = 1
-                        weights.append(100 ** ((max_ovr - c.ovr) / denom))
-                    return random.choices(cards, weights=weights, k=1)[0]
+            @sync_to_async
+            def _pick_card():
+                qs = CardTemplate.objects.all()
+                if min_ovr is not None:
+                    qs = qs.filter(ovr__gte=min_ovr)
+                if max_ovr is not None:
+                    qs = qs.filter(ovr__lte=max_ovr)
+                if event:
+                    qs = qs.filter(event_name__iexact=event)
+                if premium:
+                    qs = qs.filter(card_type="PREMIUM")
                 
-                card = await _pick_dynamic_ovr()
-            elif event:
-                # Event-filtered spawn: pick directly from matching cards
-                # using dynamic OVR-based weighting (same approach as OVR-range path).
-                # This avoids the rarity-roll pipeline which almost never lands on
-                # the high rarities that event cards typically have.
-                @sync_to_async
-                def _pick_event_card():
-                    qs = CardTemplate.objects.filter(event_name__iexact=event)
-                    if premium:
-                        qs = qs.filter(card_type="PREMIUM")
-                    if not qs.exists():
-                        return None
+                cards = list(qs)
+                if not cards:
+                    return None
+                return random.choice(cards)
 
-                    cards = list(qs)
-                    ovr_values = [c.ovr for c in cards]
-                    lo, hi = min(ovr_values), max(ovr_values)
-                    denom = max(1, hi - lo)
-                    weights = [100 ** ((hi - c.ovr) / denom) for c in cards]
-                    return random.choices(cards, weights=weights, k=1)[0]
-
-                card = await _pick_event_card()
-            else:
-                card = await sync_to_async(pick_random_card)(
-                    "PACK",
-                    event_name_filter=None,
-                    min_ovr_filter=min_ovr,
-                    max_ovr_filter=max_ovr,
-                    card_type_filter="PREMIUM" if premium else None,
-                    strict=True
-                )
+            card = await _pick_card()
                 
             if not card:
                 await interaction.followup.send(f"Error: Could not find any card matching the criteria (Event: {event}, OVR: {min_ovr}-{max_ovr}).", ephemeral=True)
@@ -1556,6 +1518,64 @@ class AdminCog(commands.Cog, name="Admin"):
             color=discord.Color.gold()
         )
         await interaction.followup.send(embed=embed)
+
+
+    @admin_group.command(name="dm", description="Send a DM to all registered users")
+    @app_commands.describe(message="The message to send to everyone")
+    async def admin_dm(self, interaction: discord.Interaction, message: str):
+        if not await self.check_admin(interaction):
+            return
+            
+        @sync_to_async
+        def get_user_count():
+            return DiscordUser.objects.count()
+            
+        count = await get_user_count()
+        est_seconds = count * 1.5
+        est_time = f"{est_seconds / 60:.1f} minutes" if est_seconds > 60 else f"{est_seconds} seconds"
+        
+        class ConfirmView(discord.ui.View):
+            def __init__(self, bot, message_content, total_count):
+                super().__init__(timeout=60)
+                self.bot = bot
+                self.message_content = message_content
+                self.total_count = total_count
+                
+            @discord.ui.button(label="Confirm", style=discord.ButtonStyle.danger)
+            async def confirm(self, btn_interaction: discord.Interaction, button: discord.ui.Button):
+                await btn_interaction.response.send_message("Starting mass DM in the background...", ephemeral=True)
+                self.stop()
+                
+                async def do_mass_dm():
+                    users = await sync_to_async(list)(DiscordUser.objects.values_list('discord_id', flat=True))
+                    success = 0
+                    failed = 0
+                    for uid in users:
+                        try:
+                            user_obj = self.bot.get_user(uid) or await self.bot.fetch_user(uid)
+                            if user_obj:
+                                await user_obj.send(self.message_content)
+                                success += 1
+                        except Exception as e:
+                            log.warning(f"Failed to DM {uid}: {e}")
+                            failed += 1
+                        await asyncio.sleep(1.5)
+                    log.info(f"Mass DM completed. Success: {success}, Failed: {failed}")
+                
+                self.bot.loop.create_task(do_mass_dm())
+
+            @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+            async def cancel(self, btn_interaction: discord.Interaction, button: discord.ui.Button):
+                await btn_interaction.response.send_message("Cancelled.", ephemeral=True)
+                self.stop()
+                
+        view = ConfirmView(self.bot, message, count)
+        await interaction.response.send_message(
+            f"Are you sure you want to send this message to **{count}** users?\n"
+            f"Estimated time: **{est_time}** (due to Discord rate limits).\n\n"
+            f"**Message preview:**\n{message}", 
+            view=view, ephemeral=True
+        )
 
 
 async def setup(bot):

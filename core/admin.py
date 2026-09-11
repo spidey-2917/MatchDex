@@ -31,6 +31,8 @@ from .models import (
     SimSeason,
     SimSeasonPlayer,
     TradeObjectiveLog,
+    Manager,
+    UserManager,
 )
 
 
@@ -202,10 +204,35 @@ class DiscordUserAdmin(admin.ModelAdmin):
 
 @admin.register(CardTemplate)
 class CardTemplateAdmin(admin.ModelAdmin):
-    list_display: Sequence[str] = ("name", "ovr", "rarity", "position", "card_type", "event_name")
-    list_filter: Sequence[str] = ("rarity", "card_type", "position", "event_name")
+    list_display: Sequence[str] = ("name", "ovr", "rarity", "position", "card_type", "event_name", "premium_type")
+    list_filter: Sequence[str] = ("rarity", "card_type", "position", "event_name", "premium_type")
     search_fields: Sequence[str] = ("name", "club", "event_name")
     readonly_fields: Sequence[str] = ()
+    fieldsets = (
+        (None, {
+            "fields": (
+                "name", "position", "club", "event_name",
+                "attack_stat", "defence_stat", "ovr", "rarity",
+            )
+        }),
+        ("Card Type Options", {
+            "fields": ("card_type", "premium_type"),
+        }),
+        ("Boosts", {
+            "fields": ("attack_boost_pct", "defence_boost_pct"),
+            "classes": ("collapse",),
+        }),
+        ("Image", {
+            "fields": ("image_base",),
+            "classes": ("collapse",),
+        }),
+    )
+
+    class Media:
+        js = (
+            'admin/js/vendor/jquery/jquery.js',
+            'admin/js/premium_toggle.js',
+        )
 
 
 @admin.register(UserCard)
@@ -373,4 +400,17 @@ class TradeObjectiveLogAdmin(admin.ModelAdmin):
     list_display = ("trade", "user", "date")
     list_filter = ("date",)
     search_fields = ("user__username", "trade__id")
+
+
+@admin.register(Manager)
+class ManagerAdmin(admin.ModelAdmin):
+    list_display = ("name", "nationality", "preferred_formation", "boost_type")
+    list_filter = ("preferred_formation", "boost_type")
+    search_fields = ("name", "nationality")
+
+
+@admin.register(UserManager)
+class UserManagerAdmin(admin.ModelAdmin):
+    list_display = ("owner", "manager")
+    search_fields = ("owner__username", "manager__name")
 

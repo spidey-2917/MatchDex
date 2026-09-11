@@ -47,6 +47,7 @@ class TeamData:
     gk_rating: float = 0.0
     tactic: str = "balanced"
     logo_bonus: int = 0
+    manager_boost_type: Optional[str] = None
 
 
 @dataclass
@@ -92,6 +93,8 @@ def build_team_data(
     display_name: str,
     tactic: str = "balanced",
     logo_bonus: int = 0,
+    manager=None,
+    formation: str = "433",
 ) -> TeamData:
     """
     Converts a list of UserCard ORM objects into a TeamData snapshot.
@@ -107,12 +110,19 @@ def build_team_data(
         t = card.template
         # Determine the slot from the related_name or by iterating the lineup
         # For now we use position-based grouping
+        atk = t.attack_stat
+        df = t.defence_stat
+        if t.attack_boost_pct > 0:
+            atk = int(atk * (1 + t.attack_boost_pct / 100.0))
+        if t.defence_boost_pct > 0:
+            df = int(df * (1 + t.defence_boost_pct / 100.0))
+            
         snap = PlayerSnapshot(
             name=t.name,
             position=t.position,
-            attack=t.attack_stat,
-            defence=t.defence_stat,
-            ovr=t.ovr or max(t.attack_stat, t.defence_stat),
+            attack=atk,
+            defence=df,
+            ovr=t.ovr or max(atk, df),
             slot="",
         )
         players.append(snap)
@@ -142,6 +152,14 @@ def build_team_data(
             midfielders.append(defenders[0])
 
     att_mod, mid_mod, def_mod = TACTIC_MODS.get(tactic, (1.0, 1.0, 1.0))
+    
+    manager_boost_type = None
+    if manager and manager.preferred_formation == formation:
+        manager_boost_type = manager.boost_type
+        if manager_boost_type == "ATTACKING":
+            att_mod *= 1.05
+        elif manager_boost_type == "DEFENCE":
+            def_mod *= 1.05
 
     team = TeamData(
         display_name=display_name,
@@ -156,6 +174,7 @@ def build_team_data(
         gk_rating=(gk.defence + logo_bonus) if gk else 50.0,
         tactic=tactic,
         logo_bonus=logo_bonus,
+        manager_boost_type=manager_boost_type,
     )
     return team
 
@@ -163,8 +182,8 @@ def build_team_data(
 # ── Simulation Helpers ───────────────────────────────────────────
 
 def _luck() -> float:
-    """Random luck multiplier: 0.80 – 1.30, slightly biased towards average."""
-    return random.triangular(0.80, 1.30, 1.02)
+    """Random luck multiplier: 0.85 – 1.15 (85% stats reliance, 15% luck)."""
+    return random.triangular(0.85, 1.15, 1.00)
 
 
 def _pick_shooter(team: TeamData) -> PlayerSnapshot:
@@ -312,7 +331,11 @@ def simulate_match(home: TeamData, away: TeamData) -> MatchResult:
         chance_threshold = def_roll * 1.05  # slight defender advantage
         if att_roll > chance_threshold:
             # Chance created!
-            is_counter = attacking_team.tactic == "counter" and random.random() < 0.25
+            counter_chance_prob = 0.25
+            if attacking_team.manager_boost_type == "COUNTER_ATTACKING":
+                counter_chance_prob = 0.35
+                
+            is_counter = attacking_team.tactic == "counter" and random.random() < counter_chance_prob
             if is_counter:
                 events.append(MatchEvent(
                     minute=minute,
@@ -366,7 +389,11 @@ def simulate_match(home: TeamData, away: TeamData) -> MatchResult:
                 ))
         else:
             # Attack neutralised — counter-attack chance for defending team
-            if defending_team.tactic == "counter" and random.random() < 0.35:
+            def_counter_prob = 0.35
+            if defending_team.manager_boost_type == "COUNTER_ATTACKING":
+                def_counter_prob = 0.45
+                
+            if defending_team.tactic == "counter" and random.random() < def_counter_prob:
                 counter_chance = True
 
         # ── Counter-Attack Resolution ─────────────────────────

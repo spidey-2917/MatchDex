@@ -828,17 +828,31 @@ class MatchCog(commands.Cog, name="Matches"):
                 p2_trophies = "N/A"
 
             # Load lineups
-            p1_cards, p1_tactic = await load_lineup_for_sim(p1.id)
-            p2_cards, p2_tactic = await load_lineup_for_sim(p2.id)
+            p1_cards, p1_tactic, p1_formation = await load_lineup_for_sim(p1.id)
+            p2_cards, p2_tactic, p2_formation = await load_lineup_for_sim(p2.id)
 
             b1 = await get_logo_bonus(p1.id)
             b2 = await get_logo_bonus(p2.id)
+            
+            from core.models import UserManager
+            @sync_to_async
+            def get_manager(uid):
+                try:
+                    um = UserManager.objects.select_related("manager").get(owner__discord_id=uid)
+                    return um.manager
+                except UserManager.DoesNotExist:
+                    return None
+                    
+            p1_manager = await get_manager(p1.id)
+            p2_manager = await get_manager(p2.id)
 
             home = build_team_data(
-                p1_cards, p1.display_name, tactic=p1_tactic, logo_bonus=b1
+                p1_cards, p1.display_name, tactic=p1_tactic, logo_bonus=b1,
+                manager=p1_manager, formation=p1_formation
             )
             away = build_team_data(
-                p2_cards, p2.display_name, tactic=p2_tactic, logo_bonus=b2
+                p2_cards, p2.display_name, tactic=p2_tactic, logo_bonus=b2,
+                manager=p2_manager, formation=p2_formation
             )
 
             # Run the simulation (instant, pure math)
@@ -1120,7 +1134,7 @@ def load_lineup_for_sim(uid):
         ]
         if getattr(lineup, s)
     ]
-    return cards, lineup.tactic
+    return cards, lineup.tactic, lineup.formation
 
 
 async def setup(bot):

@@ -378,17 +378,33 @@ class MdSettingsCog(commands.Cog, name="Settings"):
                         trader_name = member.display_name
                 traded_by_str = f"\nTraded by: {trader_name}"
             
+            atk_str = f"ATK: {template.attack_stat}"
+            if template.attack_boost_pct > 0:
+                atk_str += f" (+{template.attack_boost_pct}%)"
+                
+            def_str = f"DEF: {template.defence_stat}"
+            if template.defence_boost_pct > 0:
+                def_str += f" (+{template.defence_boost_pct}%)"
+                
             content = (
                 f"ID: #{user_card.card_id}\n"
                 f"{caught_str}{traded_by_str}\n\n"
-                f"ATK: {template.attack_stat}\n"
-                f"DEF: {template.defence_stat}"
+                f"{atk_str}\n"
+                f"{def_str}"
             )
         else:
+            atk_str = f"ATK: {template.attack_stat}"
+            if template.attack_boost_pct > 0:
+                atk_str += f" (+{template.attack_boost_pct}%)"
+                
+            def_str = f"DEF: {template.defence_stat}"
+            if template.defence_boost_pct > 0:
+                def_str += f" (+{template.defence_boost_pct}%)"
+                
             content = (
                 f"Player: {template.display_name}\n\n"
-                f"ATK: {template.attack_stat}\n"
-                f"DEF: {template.defence_stat}"
+                f"{atk_str}\n"
+                f"{def_str}"
             )
 
         await interaction.followup.send(content=content, file=file)
@@ -698,11 +714,19 @@ class SettingsCardSelect(discord.ui.Select):
                     trader_name = member.display_name
             traded_by_str = f"\nTraded by: {trader_name}"
         
+        atk_str = f"ATK: {card.template.attack_stat}"
+        if card.template.attack_boost_pct > 0:
+            atk_str += f" (+{card.template.attack_boost_pct}%)"
+            
+        def_str = f"DEF: {card.template.defence_stat}"
+        if card.template.defence_boost_pct > 0:
+            def_str += f" (+{card.template.defence_boost_pct}%)"
+            
         content = (
             f"ID: #{card.card_id}\n"
             f"{caught_str}{traded_by_str}\n\n"
-            f"ATK: {card.template.attack_stat}\n"
-            f"DEF: {card.template.defence_stat}"
+            f"{atk_str}\n"
+            f"{def_str}"
         )
 
         await interaction.followup.send(content=content, file=file)
