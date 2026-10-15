@@ -431,10 +431,3 @@ class UserManagerAdmin(admin.ModelAdmin):
     search_fields = ("owner__username", "manager__name")
 
 
-@admin.register(Blacklist)
-class BlacklistAdmin(admin.ModelAdmin):
-    list_display: Sequence[str] = ("target_id", "type", "reason", "created_at")
-    list_filter: Sequence[str] = ("type",)
-    search_fields: Sequence[str] = ("target_id", "reason")
-
-
