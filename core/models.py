@@ -1,0 +1,808 @@
+import uuid
+import typing
+
+from django.db import models
+from django.db.models.signals import pre_save
+from django.dispatch import receiver
+
+
+class TypedModel(models.Model):
+    objects = models.Manager()
+
+    if typing.TYPE_CHECKING:
+        from django.core.exceptions import ObjectDoesNotExist
+        DoesNotExist: type[ObjectDoesNotExist]
+
+    class Meta:
+        abstract = True
+
+
+def generate_short_id():
+    return "TEMP"
+
+
+class DiscordUser(TypedModel):
+    discord_id = models.BigIntegerField(unique=True, primary_key=True)
+    username = models.CharField(max_length=100, blank=True, null=True)
+    points = models.IntegerField(default=0)
+    wins = models.IntegerField(default=0)
+    losses = models.IntegerField(default=0)
+    draws = models.IntegerField(default=0)
+    cards_collected = models.IntegerField(default=0)
+    is_premium = models.BooleanField(default=False)
+    is_booster = models.BooleanField(default=False)
+    is_admin = models.BooleanField(default=False)
+    is_inventory_private = models.BooleanField(default=False)
+    joined_at = models.DateTimeField(auto_now_add=True)
+    total_packs_opened = models.IntegerField(default=0)
+    
+    DONATION_CHOICES = [
+        ("OPEN", "Open"),
+        ("FRIENDS", "Friends Only"),
+        ("PRIVATE", "Private"),
+    ]
+    donation_policy = models.CharField(max_length=10, choices=DONATION_CHOICES, default="OPEN")
+    friends = models.ManyToManyField("self", blank=True, symmetrical=True)
+
+    last_pack_daily = models.DateTimeField(null=True, blank=True)
+    last_pack_weekly = models.DateTimeField(null=True, blank=True)
+    last_pack_event = models.DateTimeField(null=True, blank=True)
+    last_pack_premium = models.DateTimeField(null=True, blank=True)
+    last_pack_booster = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.username} ({self.discord_id})"
+
+
+class PremiumRole(TypedModel):
+    """Discord role IDs that automatically grant premium access to /pack_premium."""
+    role_id = models.BigIntegerField(unique=True)
+    label = models.CharField(
+        max_length=100, blank=True,
+        help_text="Optional label (e.g. 'Server Booster', 'Patreon T1')"
+    )
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.label or 'Role'} ({self.role_id})"
+
+
+class CardTemplate(TypedModel):
+    CARD_TYPES = [
+        ("BASE", "Base Card"),
+        ("ICON", "Icon Card"),
+        ("EVENT", "Event Card"),
+        ("PREMIUM", "Premium Card"),
+    ]
+
+    POSITIONS = [
+        ("LW", "Left Wing"),
+        ("ST", "Striker"),
+        ("RW", "Right Wing"),
+        ("CAM", "Attacking Midfielder"),
+        ("CM", "Central Midfielder"),
+        ("CDM", "Central Defensive Midfielder"),
+        ("LB", "Left Back"),
+        ("CB", "Center Back"),
+        ("RB", "Right Back"),
+        ("GK", "Goalkeeper"),
+    ]
+
+    RARITIES = [
+        ("Common I", "Common I (11.00%)"),
+        ("Common II", "Common II (10.50%)"),
+        ("Common III", "Common III (8.50%)"),
+        ("Uncommon I", "Uncommon I (8.40%)"),
+        ("Uncommon II", "Uncommon II (8.35%)"),
+        ("Uncommon III", "Uncommon III (8.25%)"),
+        ("Rare I", "Rare I (7.00%)"),
+        ("Rare II", "Rare II (6.70%)"),
+        ("Rare III", "Rare III (6.30%)"),
+        ("Elite I", "Elite I (5.00%)"),
+        ("Elite II", "Elite II (4.70%)"),
+        ("Elite III", "Elite III (4.30%)"),
+        ("Epic I", "Epic I (2.50%)"),
+        ("Epic II", "Epic II (2.00%)"),
+        ("Epic III", "Epic III (1.50%)"),
+        ("Legendary I", "Legendary I (1.40%)"),
+        ("Legendary II", "Legendary II (1.35%)"),
+        ("Legendary III", "Legendary III (1.25%)"),
+        ("Mythic I", "Mythic I (0.40%)"),
+        ("Mythic II", "Mythic II (0.30%)"),
+        ("Mythic III", "Mythic III (0.20%)"),
+        ("Ultimate I", "Ultimate I (0.06%)"),
+        ("Ultimate II", "Ultimate II (0.03%)"),
+        ("Ultimate III", "Ultimate III (0.01%)"),
+        ("Premium", "Premium"),
+    ]
+
+    PREMIUM_TYPES = [
+        ("CUSTOM", "Custom"),
+        ("SBC", "SBC"),
+        ("PAID", "Paid"),
+    ]
+
+    name = models.CharField(max_length=100)
+    position = models.CharField(max_length=5, choices=POSITIONS)
+    attack_stat = models.IntegerField()
+    defence_stat = models.IntegerField()
+    attack_boost_pct = models.IntegerField(default=0, help_text="Percentage boost for attack (e.g. 5 for 5%)")
+    defence_boost_pct = models.IntegerField(default=0, help_text="Percentage boost for defence")
+    ovr = models.IntegerField(blank=True, null=True)
+    rarity = models.CharField(max_length=20, choices=RARITIES, blank=True)
+    event_name = models.CharField(max_length=100, default="Base")
+    club = models.CharField(max_length=100)
+    card_type = models.CharField(max_length=10, choices=CARD_TYPES, default="BASE")
+    premium_type = models.CharField(max_length=10, choices=PREMIUM_TYPES, blank=True, null=True, help_text="Backend only classification for Premium cards")
+    image_base = models.ImageField(upload_to="card_templates/", blank=True, null=True)
+
+    @property
+    def display_name(self):
+        if self.event_name and self.event_name.lower() != "base":
+            return f"{self.name} ({self.event_name})"
+        return self.name
+
+    def __str__(self):
+        return f"{self.name} - {self.ovr} {self.rarity} ({self.card_type})"
+
+
+@receiver(pre_save, sender=CardTemplate)
+def update_ovr_and_rarity(sender, instance, **kwargs):
+    # Only auto-calculate OVR if not provided or zero
+    if not instance.ovr:
+        instance.ovr = max(instance.attack_stat, instance.defence_stat)
+
+
+class UserCard(TypedModel):
+    card_id = models.CharField(
+        max_length=8, unique=True, default=generate_short_id, editable=False
+    )
+    owner = models.ForeignKey(
+        DiscordUser, on_delete=models.CASCADE, related_name="inventory"
+    )
+    template = models.ForeignKey(CardTemplate, on_delete=models.CASCADE)
+    traded_by = models.ForeignKey(
+        DiscordUser, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='cards_traded_away',
+        help_text="The user who last traded this card to the current owner"
+    )
+    caught_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        if not self.card_id:
+            self.card_id = "TEMP"
+        super().save(*args, **kwargs)
+        if is_new and (not self.card_id or self.card_id == "TEMP"):
+            from core.utils import to_base36
+            self.card_id = to_base36(self.id)
+            super().save(update_fields=["card_id"])
+
+    def __str__(self):
+        return f"[{self.card_id}] {self.owner.username}'s {self.template.name}"
+
+
+class FavouriteCard(TypedModel):
+    owner = models.ForeignKey(
+        DiscordUser, on_delete=models.CASCADE, related_name="favourites"
+    )
+    card = models.ForeignKey(
+        UserCard, on_delete=models.CASCADE, related_name="favourited_by"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("owner", "card")
+
+    def __str__(self):
+        return f"{self.owner.username} ❤️ {self.card.template.name}"
+
+
+class Logo(TypedModel):
+    RARITIES = [("RARE", "Rare"), ("EPIC", "Epic"), ("LEGENDARY", "Legendary")]
+    name = models.CharField(max_length=100)
+    rarity = models.CharField(max_length=10, choices=RARITIES)
+    bonus = models.IntegerField(default=1)  # +1, +2, +3
+
+    def __str__(self):
+        return f"{self.name} ({self.rarity} +{self.bonus})"
+
+
+class UserLogo(TypedModel):
+    owner = models.OneToOneField(
+        DiscordUser, on_delete=models.CASCADE, related_name="equipped_logo"
+    )
+    logo = models.ForeignKey(Logo, on_delete=models.CASCADE)
+
+
+class Lineup(TypedModel):
+    owner = models.ForeignKey(DiscordUser, on_delete=models.CASCADE)
+    name = models.CharField(max_length=50, default="Lineup 1")
+    is_active = models.BooleanField(default=False)
+    formation = models.CharField(
+        max_length=20, default="433"
+    )  # e.g. 433_attack, 442_diamond
+
+    TACTIC_CHOICES = [
+        ("balanced", "Balanced"),
+        ("attacking", "Attacking"),
+        ("defensive", "Defensive"),
+        ("possession", "Possession"),
+        ("counter", "Counter Attack"),
+    ]
+    tactic = models.CharField(
+        max_length=20, choices=TACTIC_CHOICES, default="balanced"
+    )
+
+    # Slots for 11 players
+    gk = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_gk",
+    )
+    df1 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_df1",
+    )
+    df2 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_df2",
+    )
+    df3 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_df3",
+    )
+    df4 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_df4",
+    )
+    df5 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_df5",
+    )
+    md1 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_md1",
+    )
+    md2 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_md2",
+    )
+    md3 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_md3",
+    )
+    md4 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_md4",
+    )
+    md5 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_md5",
+    )
+    at1 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_at1",
+    )
+    at2 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_at2",
+    )
+    at3 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_at3",
+    )
+    at4 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_at4",
+    )
+
+    # 3 substitute slots
+    sub1 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_sub1",
+    )
+    sub2 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_sub2",
+    )
+    sub3 = models.ForeignKey(
+        UserCard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="slot_sub3",
+    )
+
+
+class PromoCode(TypedModel):
+    REWARD_TYPES = [
+        ("POINTS", "Points"),
+        ("PACK_DAILY", "Daily Pack (Base)"),
+        ("PACK_WEEKLY", "Weekly Pack (Icon)"),
+        ("PACK_EVENT", "Event Pack (Event)"),
+        ("PACK_PREMIUM", "Premium Pack (Icon/Event)"),
+        ("CARD", "Specific Card"),
+    ]
+
+    code = models.CharField(max_length=50, unique=True)
+    reward_type = models.CharField(max_length=20, choices=REWARD_TYPES)
+    reward_points = models.IntegerField(default=0, help_text="Amount of points if reward type is POINTS")
+    reward_card = models.ForeignKey(
+        CardTemplate, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        help_text="Select a specific card if reward type is Specific Card"
+    )
+    uses = models.IntegerField(default=0)
+    max_uses = models.IntegerField(default=100)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return self.code
+
+
+class PromoCodeRedemption(TypedModel):
+    """Tracks which users have redeemed which promo codes — one redemption per user per code."""
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="promo_redemptions")
+    promo_code = models.ForeignKey(PromoCode, on_delete=models.CASCADE, related_name="redemptions")
+    redeemed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "promo_code")
+
+    def __str__(self):
+        return f"{self.user.username} redeemed {self.promo_code.code}"
+
+
+class ServerSettings(TypedModel):
+    guild_id = models.BigIntegerField(unique=True)
+    spawn_channel_id = models.BigIntegerField(null=True, blank=True)
+    catch_log_channel_id = models.BigIntegerField(null=True, blank=True)
+    command_log_channel_id = models.BigIntegerField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Server {self.guild_id}"
+
+
+class Blacklist(TypedModel):
+    TYPES = [("USER", "User"), ("GUILD", "Guild")]
+    target_id = models.BigIntegerField()
+    type = models.CharField(max_length=5, choices=TYPES)
+    reason = models.TextField(default="No reason provided")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("target_id", "type")
+
+    def __str__(self):
+        return f"{self.type} {self.target_id} — {self.reason}"
+
+
+class CommandLog(TypedModel):
+    guild_id = models.BigIntegerField()
+    user_id = models.BigIntegerField()
+    command_name = models.CharField(max_length=100)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user_id} used /{self.command_name} in {self.guild_id}"
+
+
+class Trade(TypedModel):
+    initiator = models.ForeignKey(
+        DiscordUser, on_delete=models.CASCADE, related_name="trades_initiated"
+    )
+    receiver = models.ForeignKey(
+        DiscordUser, on_delete=models.CASCADE, related_name="trades_received"
+    )
+    channel_id = models.BigIntegerField(null=True, blank=True)
+    message_id = models.BigIntegerField(null=True, blank=True)
+    state_data = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        default="PENDING",
+        choices=[
+            ("PENDING", "Pending"),
+            ("COMPLETED", "Completed"),
+            ("CANCELLED", "Cancelled"),
+        ],
+    )
+
+    def __str__(self):
+        return f"Trade between {self.initiator.username} and {self.receiver.username} - {self.status}"
+
+
+class TradeItem(TypedModel):
+    trade = models.ForeignKey(Trade, on_delete=models.CASCADE, related_name="items")
+    card = models.ForeignKey(UserCard, on_delete=models.CASCADE)
+    sender = models.ForeignKey(
+        DiscordUser, on_delete=models.CASCADE, related_name="sent_trade_items"
+    )
+    receiver = models.ForeignKey(
+        DiscordUser, on_delete=models.CASCADE, related_name="received_trade_items"
+    )
+
+    def __str__(self):
+        return f"{self.card.template.name} sent by {self.sender.username}"
+
+
+class RateConfig(TypedModel):
+    MODES = [("RARITY", "By Rarity"), ("OVR", "By OVR Range")]
+
+    category = models.CharField(max_length=50, unique=True, help_text="Category or unique slug for this rate config (e.g. PACK_SUMMER)")
+    mode = models.CharField(max_length=10, choices=MODES, default="RARITY")
+
+    class Meta:
+        verbose_name = "Rate Configuration"
+        verbose_name_plural = "Rate Configurations"
+
+    def __str__(self):
+        return f"{self.category} — {self.get_mode_display()}"
+
+    def get_rates_summary(self):
+        """Build a human-readable summary of active rates with percentages."""
+        rates = self.rates.all()
+        if not rates.exists():
+            return "No rates configured (using config.yml defaults)"
+        total = sum(r.weight for r in rates)
+        if total == 0:
+            return "All weights are 0"
+        parts = []
+        for r in rates:
+            if self.mode == "RARITY":
+                parts.append(f"{r.rarity}: {r.percentage}")
+            else:
+                pct = (r.weight / total) * 100
+                parts.append(f"OVR {r.min_ovr}–{r.max_ovr}: {pct:.1f}%")
+        return " | ".join(parts)
+
+
+class SpawnRate(TypedModel):
+    config = models.ForeignKey(
+        RateConfig, on_delete=models.CASCADE, related_name="rates"
+    )
+
+    # For Rarity mode
+    rarity = models.CharField(
+        max_length=20, choices=CardTemplate.RARITIES, blank=True, null=True,
+        help_text="Used when mode is 'By Rarity'"
+    )
+
+    # For OVR mode
+    min_ovr = models.IntegerField(
+        blank=True, null=True, help_text="Min OVR (inclusive). Used when mode is 'By OVR Range'"
+    )
+    max_ovr = models.IntegerField(
+        blank=True, null=True, help_text="Max OVR (inclusive). Used when mode is 'By OVR Range'"
+    )
+
+    weight = models.FloatField(
+        default=1.0, help_text="Relative weight. Higher = more likely to drop."
+    )
+
+    class Meta:
+        verbose_name = "Drop Rate"
+        verbose_name_plural = "Drop Rates"
+        ordering = ["-weight"]
+
+    def __str__(self):
+        if self.config.mode == "RARITY":
+            return f"{self.rarity}: {self.weight}"
+        return f"OVR {self.min_ovr}–{self.max_ovr}: {self.weight}"
+
+    @property
+    def percentage(self):
+        rates = self.config.rates.all()
+        total = sum(r.weight for r in rates)
+        if total == 0:
+            return "0%"
+        
+        if self.config.mode == "RARITY" and self.rarity:
+            parts = self.rarity.split()
+            if len(parts) > 1:
+                base_name = parts[0]
+                category_total = sum(r.weight for r in rates if r.rarity and r.rarity.startswith(base_name))
+                if category_total > 0:
+                    sub_pct = (self.weight / category_total) * 100
+                    cat_pct = (category_total / total) * 100
+                    return f"{sub_pct:.1f}% (of {cat_pct:.1f}% {base_name})"
+        
+        return f"{(self.weight / total) * 100:.1f}%"
+
+
+class SBC(TypedModel):
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    reward_card = models.ForeignKey(
+        CardTemplate, on_delete=models.CASCADE, related_name="sbc_rewards",
+        blank=True, null=True,
+        help_text="Specific card reward (leave blank if rewarding a pack instead)"
+    )
+    reward_pack = models.ForeignKey(
+        'Pack', on_delete=models.SET_NULL,
+        blank=True, null=True, related_name="sbc_rewards",
+        help_text="Reward pack to stash (leave blank if rewarding a card instead)"
+    )
+    reward_pack_count = models.IntegerField(
+        default=1,
+        help_text="Number of packs to stash as reward"
+    )
+    is_active = models.BooleanField(default=True)
+    end_date = models.DateTimeField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.name} (Active: {self.is_active})"
+
+
+class SBCRequirement(TypedModel):
+    sbc = models.ForeignKey(SBC, on_delete=models.CASCADE, related_name="requirements")
+    quantity = models.IntegerField(default=1)
+
+    # Flexible Requirement Fields
+    specific_template = models.ForeignKey(
+        CardTemplate, on_delete=models.CASCADE, blank=True, null=True, related_name="+"
+    )
+    min_ovr = models.IntegerField(blank=True, null=True)
+    required_rarity = models.CharField(
+        max_length=20, choices=CardTemplate.RARITIES, blank=True, null=True
+    )
+    required_club = models.CharField(max_length=100, blank=True, null=True)
+    required_position = models.CharField(
+        max_length=5, choices=CardTemplate.POSITIONS, blank=True, null=True
+    )
+
+    def __str__(self):
+        conditions = []
+        if self.specific_template:
+            conditions.append(f"Template: {self.specific_template.name} ({self.specific_template.ovr})")
+        if self.min_ovr:
+            conditions.append(f"Min OVR: {self.min_ovr}")
+        if self.required_rarity:
+            conditions.append(f"Rarity: {self.required_rarity}")
+        if self.required_club:
+            conditions.append(f"Club: {self.required_club}")
+        if self.required_position:
+            conditions.append(f"Position: {self.required_position}")
+        
+        cond_str = ", ".join(conditions) if conditions else "Any Card"
+        return f"{self.quantity}x [{cond_str}]"
+
+
+class Pack(TypedModel):
+    name = models.CharField(max_length=100, help_text="Display name of the pack")
+    code = models.CharField(max_length=50, unique=True, help_text="Unique slug for commands (e.g., 'summer', 'daily')")
+    cooldown_days = models.FloatField(default=1.0)
+    is_premium_only = models.BooleanField(default=False)
+    is_weekly_grant = models.BooleanField(
+        default=False,
+        help_text="If True, all users automatically receive this pack once every 7 days in their pack wallet"
+    )
+    
+    CARD_TYPE_CHOICES = [("ANY", "Any")] + CardTemplate.CARD_TYPES
+    card_type_filter = models.CharField(max_length=20, choices=CARD_TYPE_CHOICES, default="ANY")
+    event_name_filter = models.CharField(max_length=100, blank=True, null=True, help_text="Require specific event name")
+    min_ovr_filter = models.IntegerField(
+        blank=True, null=True,
+        help_text="Minimum OVR for cards in this pack (inclusive)"
+    )
+    max_ovr_filter = models.IntegerField(
+        blank=True, null=True,
+        help_text="Maximum OVR for cards in this pack (inclusive)"
+    )
+    
+    rate_config_category = models.CharField(
+        max_length=50, 
+        blank=True, 
+        null=True,
+        help_text="The category string matching a RateConfig (e.g., PACK, PACK_PREMIUM, or PACK_CUSTOM)"
+    )
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class UserPack(TypedModel):
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="packs")
+    pack = models.ForeignKey(Pack, on_delete=models.CASCADE)
+    stash_count = models.IntegerField(default=0, help_text="Number of packs the user has stashed (bypasses cooldown)")
+    last_opened_at = models.DateTimeField(null=True, blank=True)
+    last_weekly_grant = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp of when the user was last granted their weekly free pack"
+    )
+
+    class Meta:
+        unique_together = ("user", "pack")
+
+    def __str__(self):
+        return f"{self.user.username} - {self.pack.name} ({self.stash_count})"
+
+
+class Season(TypedModel):
+    name = models.CharField(max_length=100, unique=True, help_text="e.g., 'Season 1'")
+    is_active = models.BooleanField(default=False)
+    start_date = models.DateTimeField(auto_now_add=True)
+    end_date = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.name} (Active: {self.is_active})"
+
+
+class Referral(TypedModel):
+    STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("COMPLETED", "Completed"),
+    ]
+    inviter = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="referrals_sent")
+    invited_user = models.OneToOneField(DiscordUser, on_delete=models.CASCADE, related_name="referral_received")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    season = models.ForeignKey(Season, on_delete=models.SET_NULL, null=True, blank=True, related_name="referrals")
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.inviter.username} -> {self.invited_user.username} ({self.status})"
+
+
+class ObjectiveRewardPoolItem(TypedModel):
+    REWARD_TYPES = [
+        ("POINTS", "Points"),
+        ("PACK", "Pack"),
+        ("CARD", "Specific Card")
+    ]
+    name = models.CharField(max_length=100)
+    reward_type = models.CharField(max_length=20, choices=REWARD_TYPES)
+    amount = models.IntegerField(default=1, help_text="Amount of points or packs")
+    pack = models.ForeignKey("Pack", on_delete=models.SET_NULL, null=True, blank=True)
+    card = models.ForeignKey("CardTemplate", on_delete=models.SET_NULL, null=True, blank=True)
+    weight = models.IntegerField(default=10, help_text="Higher weight = more likely to drop")
+
+    def __str__(self):
+        return f"{self.name} (Weight: {self.weight})"
+
+
+class DailyObjectiveTemplate(TypedModel):
+    OBJECTIVE_TYPES = [
+        ("open_pack", "Open Packs"),
+        ("perform_trade", "Perform Trades"),
+        ("play_match", "Play Matches"),
+        ("finish_sbc", "Finish SBC"),
+        ("claim_card", "Claim Cards"),
+        ("play_wager", "Play Wagers"),
+    ]
+    objective_type = models.CharField(max_length=20, choices=OBJECTIVE_TYPES)
+    target_amount = models.IntegerField(default=1)
+    description = models.CharField(max_length=200, help_text="e.g. Play 3 matches")
+
+    def __str__(self):
+        return f"{self.description} ({self.objective_type}: {self.target_amount})"
+
+
+class UserDailyObjective(TypedModel):
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="daily_objectives")
+    template = models.ForeignKey(DailyObjectiveTemplate, on_delete=models.CASCADE)
+    date = models.DateField(auto_now_add=True)
+    progress = models.IntegerField(default=0)
+    is_claimed = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ("user", "template", "date")
+
+    def __str__(self):
+        return f"{self.user.username} - {self.template.description} - {self.date}"
+
+
+class SimSeason(TypedModel):
+    name = models.CharField(max_length=100)
+    start_date = models.DateTimeField(auto_now_add=True)
+    end_date = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+
+
+class SimSeasonPlayer(TypedModel):
+    season = models.ForeignKey(SimSeason, on_delete=models.CASCADE, related_name="players")
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="sim_seasons")
+    trophies = models.IntegerField(default=1000)
+    wins = models.IntegerField(default=0)
+    losses = models.IntegerField(default=0)
+    draws = models.IntegerField(default=0)
+
+    class Meta:
+        unique_together = ("season", "user")
+
+    def __str__(self):
+        return f"{self.user.username} - {self.season.name} ({self.trophies} Trophies)"
+
+
+class TradeObjectiveLog(TypedModel):
+    trade = models.ForeignKey(Trade, on_delete=models.CASCADE)
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE)
+    date = models.DateField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("trade", "user")
+
+    def __str__(self):
+        return f"Trade #{self.trade.id} - {self.user.username}"
+
+
+class Manager(TypedModel):
+    name = models.CharField(max_length=100)
+    nationality = models.CharField(max_length=100, blank=True, null=True)
+    preferred_formation = models.CharField(max_length=20, default="433", help_text="Preferred formation e.g. 433")
+    
+    BOOST_CHOICES = [
+        ("ATTACKING", "Attacking"),
+        ("DEFENCE", "Defence"),
+        ("COUNTER_ATTACKING", "Counter Attacking")
+    ]
+    boost_type = models.CharField(max_length=20, choices=BOOST_CHOICES, default="ATTACKING")
+    
+    def __str__(self):
+        return f"{self.name} ({self.preferred_formation})"
+
+
+class UserManager(TypedModel):
+    owner = models.OneToOneField(DiscordUser, on_delete=models.CASCADE, related_name="equipped_manager")
+    manager = models.ForeignKey(Manager, on_delete=models.CASCADE)
+    
+    def __str__(self):
+        return f"{self.owner.username}'s Manager: {self.manager.name}"
+

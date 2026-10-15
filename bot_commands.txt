@@ -1,0 +1,27 @@
+MatchDex Bot Commands
+=====================
+
+/about - Get information about this bot
+/collection - Show your card collection summary
+/completion - Show how much of the card collection you
+/favourite - No description
+/help - Overview of all available commands
+/last - Show your most recently caught card
+/leaderboard - Show the leaderboard
+/match_cancel - Cancel your active match
+/match_start - Challenge another user to a Matchdex game
+/pack_daily - Pack a daily base player card
+/pack_open - Open a custom or stashed pack from your wallet by name
+/pack_premium - No description
+/pack_wallet - View your stashed packs and open them
+/pack_weekly - Pack a weekly icon card
+/promo - Enter a promo code for a reward
+/sbc - Complete a Squad Building Challenge
+/shop - Get a link to the MatchDex store
+/stats - Show your basic stats
+/team_add - Add a player from your collection to a squad slot
+/team_auto - Auto-fill your squad with the best cards from your collection
+/team_begin - Create a new squad by selecting a formation
+/team_remove - Remove a player from a slot
+/team_sub - Set a substitute player on the bench
+/team_view - View a squad with details
