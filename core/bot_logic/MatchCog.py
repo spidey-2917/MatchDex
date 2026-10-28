@@ -28,6 +28,7 @@ FORMATION_SLOTS = {
 }
 
 ACTIVE_MATCHES = {}
+ACTIVE_QUICKSIMS = {}  # track running sims to prevent duplicates
 
 
 # ── DB helpers (all wrapped for async) ──────────────────────────
@@ -390,6 +391,118 @@ class ResponderView(discord.ui.View):
         v = discord.ui.View()
         v.add_item(SubSelect(self.match_id, self.responder_id, opts, self.cog))
         await interaction.response.send_message("Pick a sub:", view=v, ephemeral=True)
+
+
+def format_tactic_badge(tactic: str) -> str:
+    """Returns a friendly badge with emoji for the active strategy."""
+    t = (tactic or "balanced").lower()
+    badges = {
+        "attacking": "⚔️ Attack",
+        "defensive": "🛡️ Defend",
+        "balanced": "⚖️ Balanced",
+        "counter": "⚡ Counter",
+        "possession": "🔄 Possession",
+    }
+    return badges.get(t, f"⚖️ {t.title()}")
+
+
+class MatchTacticsView(discord.ui.View):
+    """
+    Real-time interactive tactical switchboard for MatchDex Quick Sim matches.
+    Allows both managers (p1 = home, p2 = away) to adjust their team strategy midgame.
+    Buttons dynamically update line ratings in MatchSimulationSession and announce changes.
+    """
+
+    def __init__(self, session: MatchSimulationSession, p1: discord.Member, p2: discord.Member):
+        super().__init__(timeout=360)
+        self.session = session
+        self.p1 = p1
+        self.p2 = p2
+        self.tactical_events: list[str] = []
+
+    async def _change_strategy(
+        self,
+        interaction: discord.Interaction,
+        tactic_key: str,
+        tactic_name: str,
+        emoji: str,
+        details: str,
+    ):
+        if interaction.user.id == self.p1.id:
+            team_side = "home"
+            team = self.session.home
+        elif interaction.user.id == self.p2.id:
+            team_side = "away"
+            team = self.session.away
+        else:
+            return await interaction.response.send_message(
+                "❌ Only the managers playing this match can adjust team tactics!",
+                ephemeral=True,
+            )
+
+        if self.session.is_finished:
+            return await interaction.response.send_message(
+                "🏁 The match is already over!",
+                ephemeral=True,
+            )
+
+        if team.tactic.lower() == tactic_key.lower():
+            return await interaction.response.send_message(
+                f"ℹ️ **{team.display_name}** is already using the **{emoji} {tactic_name}** strategy!",
+                ephemeral=True,
+            )
+
+        # Apply tactical change and recalculate team line ratings immediately
+        self.session.change_tactic(team_side, tactic_key)
+
+        minute = self.session.current_minute
+        announcement = (
+            f"`{minute}'` 📋 **TACTICAL CHANGE!** **{team.display_name}** switches to "
+            f"**{emoji} {tactic_name}**!"
+        )
+        self.tactical_events.append(announcement)
+
+        await interaction.response.send_message(
+            f"✅ **Tactical Strategy Updated!**\n"
+            f"**{team.display_name}** shifted to **{emoji} {tactic_name}**!\n"
+            f"*{details}*",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Attack", emoji="⚔️", style=discord.ButtonStyle.danger, row=0)
+    async def btn_attack(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change_strategy(
+            interaction, "attacking", "Attack", "⚔️",
+            "Boosts attacking line (+10% Attack, -10% Defence)."
+        )
+
+    @discord.ui.button(label="Defend", emoji="🛡️", style=discord.ButtonStyle.primary, row=0)
+    async def btn_defend(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change_strategy(
+            interaction, "defensive", "Defend", "🛡️",
+            "Strengthens defensive backline (+10% Defence, -15% Attack, +35% counter chance)."
+        )
+
+    @discord.ui.button(label="Balanced", emoji="⚖️", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_balanced(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change_strategy(
+            interaction, "balanced", "Balanced", "⚖️",
+            "Neutral line distribution across all areas."
+        )
+
+    @discord.ui.button(label="Counter", emoji="⚡", style=discord.ButtonStyle.success, row=0)
+    async def btn_counter(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change_strategy(
+            interaction, "counter", "Counter", "⚡",
+            "Solid defence (+8% Def) with maximum clearance counter-attack rate (45%)."
+        )
+
+    @discord.ui.button(label="Possession", emoji="🔄", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_possession(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change_strategy(
+            interaction, "possession", "Possession", "🔄",
+            "Controls midfield play (+15% Midfield) to dominate possession and tempo."
+        )
 
 
 # ════════════════════════════════════════════════════════════════
@@ -811,117 +924,6 @@ class MatchCog(commands.Cog, name="Matches"):
         )
         await interaction.response.send_message(embed=embed)
 
-def format_tactic_badge(tactic: str) -> str:
-    """Returns a friendly badge with emoji for the active strategy."""
-    t = (tactic or "balanced").lower()
-    badges = {
-        "attacking": "⚔️ Attack",
-        "defensive": "🛡️ Defend",
-        "balanced": "⚖️ Balanced",
-        "counter": "⚡ Counter",
-        "possession": "🔄 Possession",
-    }
-    return badges.get(t, f"⚖️ {t.title()}")
-
-
-class MatchTacticsView(discord.ui.View):
-    """
-    Real-time interactive tactical switchboard for MatchDex Quick Sim matches.
-    Allows both managers (p1 = home, p2 = away) to adjust their team strategy midgame.
-    Buttons dynamically update line ratings in MatchSimulationSession and announce changes.
-    """
-
-    def __init__(self, session: MatchSimulationSession, p1: discord.Member, p2: discord.Member):
-        super().__init__(timeout=360)
-        self.session = session
-        self.p1 = p1
-        self.p2 = p2
-        self.tactical_events: list[str] = []
-
-    async def _change_strategy(
-        self,
-        interaction: discord.Interaction,
-        tactic_key: str,
-        tactic_name: str,
-        emoji: str,
-        details: str,
-    ):
-        if interaction.user.id == self.p1.id:
-            team_side = "home"
-            team = self.session.home
-        elif interaction.user.id == self.p2.id:
-            team_side = "away"
-            team = self.session.away
-        else:
-            return await interaction.response.send_message(
-                "❌ Only the managers playing this match can adjust team tactics!",
-                ephemeral=True,
-            )
-
-        if self.session.is_finished:
-            return await interaction.response.send_message(
-                "🏁 The match is already over!",
-                ephemeral=True,
-            )
-
-        if team.tactic.lower() == tactic_key.lower():
-            return await interaction.response.send_message(
-                f"ℹ️ **{team.display_name}** is already using the **{emoji} {tactic_name}** strategy!",
-                ephemeral=True,
-            )
-
-        # Apply tactical change and recalculate team line ratings immediately
-        self.session.change_tactic(team_side, tactic_key)
-
-        minute = self.session.current_minute
-        announcement = (
-            f"`{minute}'` 📋 **TACTICAL CHANGE!** **{team.display_name}** switches to "
-            f"**{emoji} {tactic_name}**!"
-        )
-        self.tactical_events.append(announcement)
-
-        await interaction.response.send_message(
-            f"✅ **Tactical Strategy Updated!**\n"
-            f"**{team.display_name}** shifted to **{emoji} {tactic_name}**!\n"
-            f"*{details}*",
-            ephemeral=True,
-        )
-
-    @discord.ui.button(label="Attack", emoji="⚔️", style=discord.ButtonStyle.danger, row=0)
-    async def btn_attack(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._change_strategy(
-            interaction, "attacking", "Attack", "⚔️",
-            "Boosts attacking line (+10% Attack, -10% Defence)."
-        )
-
-    @discord.ui.button(label="Defend", emoji="🛡️", style=discord.ButtonStyle.primary, row=0)
-    async def btn_defend(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._change_strategy(
-            interaction, "defensive", "Defend", "🛡️",
-            "Strengthens defensive backline (+10% Defence, -15% Attack, +35% counter chance)."
-        )
-
-    @discord.ui.button(label="Balanced", emoji="⚖️", style=discord.ButtonStyle.secondary, row=0)
-    async def btn_balanced(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._change_strategy(
-            interaction, "balanced", "Balanced", "⚖️",
-            "Neutral line distribution across all areas."
-        )
-
-    @discord.ui.button(label="Counter", emoji="⚡", style=discord.ButtonStyle.success, row=0)
-    async def btn_counter(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._change_strategy(
-            interaction, "counter", "Counter", "⚡",
-            "Solid defence (+8% Def) with maximum clearance counter-attack rate (45%)."
-        )
-
-    @discord.ui.button(label="Possession", emoji="🔄", style=discord.ButtonStyle.secondary, row=0)
-    async def btn_possession(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._change_strategy(
-            interaction, "possession", "Possession", "🔄",
-            "Controls midfield play (+15% Midfield) to dominate possession and tempo."
-        )
-
 
     # ── Quick Sim live-feed runner ───────────────────────────────
 
@@ -1335,9 +1337,6 @@ class MatchTacticsView(discord.ui.View):
 # ════════════════════════════════════════════════════════════════
 #  QUICK SIM — Views & helpers (module-level, used by MatchCog)
 # ════════════════════════════════════════════════════════════════
-
-
-ACTIVE_QUICKSIMS = {}  # track running sims to prevent duplicates
 
 
 class QuickSimAcceptView(discord.ui.View):
