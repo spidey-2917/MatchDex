@@ -7,7 +7,13 @@ from discord.ext import commands
 
 from core.models import DiscordUser, Lineup, UserCard, UserLogo
 from core.objectives import update_objective_progress
-from core.bot_logic.quick_sim import build_team_data, simulate_match
+from core.bot_logic.quick_sim import (
+    build_team_data,
+    render_momentum_bar,
+    render_pitch_radar,
+    simulate_match,
+    MatchSimulationSession,
+)
 
 # Formation -> how many of each slot type are needed
 FORMATION_SLOTS = {
@@ -805,6 +811,118 @@ class MatchCog(commands.Cog, name="Matches"):
         )
         await interaction.response.send_message(embed=embed)
 
+def format_tactic_badge(tactic: str) -> str:
+    """Returns a friendly badge with emoji for the active strategy."""
+    t = (tactic or "balanced").lower()
+    badges = {
+        "attacking": "⚔️ Attack",
+        "defensive": "🛡️ Defend",
+        "balanced": "⚖️ Balanced",
+        "counter": "⚡ Counter",
+        "possession": "🔄 Possession",
+    }
+    return badges.get(t, f"⚖️ {t.title()}")
+
+
+class MatchTacticsView(discord.ui.View):
+    """
+    Real-time interactive tactical switchboard for MatchDex Quick Sim matches.
+    Allows both managers (p1 = home, p2 = away) to adjust their team strategy midgame.
+    Buttons dynamically update line ratings in MatchSimulationSession and announce changes.
+    """
+
+    def __init__(self, session: MatchSimulationSession, p1: discord.Member, p2: discord.Member):
+        super().__init__(timeout=360)
+        self.session = session
+        self.p1 = p1
+        self.p2 = p2
+        self.tactical_events: list[str] = []
+
+    async def _change_strategy(
+        self,
+        interaction: discord.Interaction,
+        tactic_key: str,
+        tactic_name: str,
+        emoji: str,
+        details: str,
+    ):
+        if interaction.user.id == self.p1.id:
+            team_side = "home"
+            team = self.session.home
+        elif interaction.user.id == self.p2.id:
+            team_side = "away"
+            team = self.session.away
+        else:
+            return await interaction.response.send_message(
+                "❌ Only the managers playing this match can adjust team tactics!",
+                ephemeral=True,
+            )
+
+        if self.session.is_finished:
+            return await interaction.response.send_message(
+                "🏁 The match is already over!",
+                ephemeral=True,
+            )
+
+        if team.tactic.lower() == tactic_key.lower():
+            return await interaction.response.send_message(
+                f"ℹ️ **{team.display_name}** is already using the **{emoji} {tactic_name}** strategy!",
+                ephemeral=True,
+            )
+
+        # Apply tactical change and recalculate team line ratings immediately
+        self.session.change_tactic(team_side, tactic_key)
+
+        minute = self.session.current_minute
+        announcement = (
+            f"`{minute}'` 📋 **TACTICAL CHANGE!** **{team.display_name}** switches to "
+            f"**{emoji} {tactic_name}**!"
+        )
+        self.tactical_events.append(announcement)
+
+        await interaction.response.send_message(
+            f"✅ **Tactical Strategy Updated!**\n"
+            f"**{team.display_name}** shifted to **{emoji} {tactic_name}**!\n"
+            f"*{details}*",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Attack", emoji="⚔️", style=discord.ButtonStyle.danger, row=0)
+    async def btn_attack(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change_strategy(
+            interaction, "attacking", "Attack", "⚔️",
+            "Boosts attacking line (+10% Attack, -10% Defence)."
+        )
+
+    @discord.ui.button(label="Defend", emoji="🛡️", style=discord.ButtonStyle.primary, row=0)
+    async def btn_defend(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change_strategy(
+            interaction, "defensive", "Defend", "🛡️",
+            "Strengthens defensive backline (+10% Defence, -15% Attack, +35% counter chance)."
+        )
+
+    @discord.ui.button(label="Balanced", emoji="⚖️", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_balanced(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change_strategy(
+            interaction, "balanced", "Balanced", "⚖️",
+            "Neutral line distribution across all areas."
+        )
+
+    @discord.ui.button(label="Counter", emoji="⚡", style=discord.ButtonStyle.success, row=0)
+    async def btn_counter(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change_strategy(
+            interaction, "counter", "Counter", "⚡",
+            "Solid defence (+8% Def) with maximum clearance counter-attack rate (45%)."
+        )
+
+    @discord.ui.button(label="Possession", emoji="🔄", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_possession(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._change_strategy(
+            interaction, "possession", "Possession", "🔄",
+            "Controls midfield play (+15% Midfield) to dominate possession and tempo."
+        )
+
+
     # ── Quick Sim live-feed runner ───────────────────────────────
 
     async def run_quicksim_live(self, interaction, p1, p2):
@@ -855,110 +973,257 @@ class MatchCog(commands.Cog, name="Matches"):
                 manager=p2_manager, formation=p2_formation
             )
 
-            # Run the simulation (instant, pure math)
-            result = simulate_match(home, away)
+            # Interactive live simulation session ported from RFM27
+            session = MatchSimulationSession(home, away)
+            view = MatchTacticsView(session, p1, p2)
 
-            # ── Live Feed ─────────────────────────────────────
+            # ── Live Feed (RFM Moving Graphic Interface) ──────
+            radar_line, zone_desc = render_pitch_radar(
+                2, "possession", p1.display_name, p2.display_name
+            )
+            initial_mom = render_momentum_bar(
+                int(round(session.current_home_momentum)),
+                p1.display_name,
+                p2.display_name,
+            )
+
             embed = discord.Embed(
-                title="🏟️ MatchDex Quick Sim",
+                title="🏟️ MatchDex Quick Sim — Kick Off!",
                 description=(
-                    f"**{p1.display_name}** ({p1_trophies} 🏆) vs ({p2_trophies} 🏆) **{p2.display_name}**\n\n"
-                    f"📋 Tactics: `{p1_tactic.title()}` vs `{p2_tactic.title()}`\n\n"
-                    "⏱️ Kick off!"
+                    f"## {p1.display_name} ({p1_trophies} 🏆)  ` 0 - 0 `  ({p2_trophies} 🏆) {p2.display_name}\n"
+                    f"> **⏱️ 0' • 1st Half** • **🟢 KICK OFF!**\n\n"
+                    f"📋 Strategies: **{home.display_name}** [{format_tactic_badge(home.tactic)}] ─ [{format_tactic_badge(away.tactic)}] **{away.display_name}**"
                 ),
                 color=discord.Color.gold(),
             )
-            embed.set_footer(text="⚡ Quick Sim — Live")
-            msg = await ch.send(embed=embed)
+            embed.add_field(
+                name="📍 Pitch Action Radar",
+                value=f"{radar_line}\n{zone_desc}",
+                inline=False,
+            )
+            embed.add_field(
+                name="📊 Momentum & Possession",
+                value=initial_mom,
+                inline=True,
+            )
+            embed.add_field(
+                name="🎯 Match Stats",
+                value="Shots (OT): **0 (0)** ─ **0 (0)**\nCards: **0 🟨** ─ **0 🟨**",
+                inline=True,
+            )
+            embed.add_field(
+                name="📜 Live Commentary Feed",
+                value="`0'` 🟢 The referee blows the whistle! Match is underway!",
+                inline=False,
+            )
+            embed.set_footer(text="⚡ MatchDex Quick Sim • RFM27 Match Engine • Midgame Tactics Active")
+            msg = await ch.send(embed=embed, view=view)
 
             displayed_events: list[str] = []
             running_home = 0
             running_away = 0
+            running_h_shots = 0
+            running_a_shots = 0
+            running_h_sot = 0
+            running_a_sot = 0
+            running_h_cards: list[str] = []
+            running_a_cards: list[str] = []
+            goalscorers: list[str] = []
 
-            # Batch events: group by ~8 minute windows
-            batches: list[list] = []
-            current_batch: list = []
-            batch_start_minute = 0
+            step_idx = 0
+            while not session.is_finished:
+                # Check if match was cancelled
+                if (
+                    ACTIVE_QUICKSIMS.get(p1.id) == "cancelled"
+                    or ACTIVE_QUICKSIMS.get(p2.id) == "cancelled"
+                ):
+                    for child in view.children:
+                        child.disabled = True
+                    embed = discord.Embed(
+                        title="🏟️ MatchDex Quick Sim — Cancelled",
+                        description="The match was cancelled.",
+                        color=discord.Color.red(),
+                    )
+                    try:
+                        await msg.edit(embed=embed, view=view)
+                    except discord.HTTPException:
+                        pass
+                    return
 
-            for event in result.events:
-                if event.event_type == "full_time":
-                    if current_batch:
-                        batches.append(current_batch)
-                        current_batch = []
-                    batches.append([event])
+                # Harvest any manager tactical updates that were clicked
+                while view.tactical_events:
+                    displayed_events.append(view.tactical_events.pop(0))
+
+                batch = session.step()
+                step_idx += 1
+                if not batch:
+                    if session.is_finished:
+                        break
                     continue
 
-                if event.minute - batch_start_minute > 8 and current_batch:
-                    batches.append(current_batch)
-                    current_batch = []
-                    batch_start_minute = event.minute
-
-                current_batch.append(event)
-
-            if current_batch:
-                batches.append(current_batch)
-
-            for batch_idx, batch in enumerate(batches):
+                last_event = batch[-1]
                 for event in batch:
                     if event.event_type == "goal":
                         if event.team_side == "home":
                             running_home += 1
                         else:
                             running_away += 1
+                        scorer_txt = f"⚽ `{event.minute}'` {event.scorer_name}"
+                        if event.assist_name:
+                            scorer_txt += f" *(Assist: {event.assist_name})*"
+                        goalscorers.append(scorer_txt)
 
-                    displayed_events.append(f"`{event.minute}'` {event.text}")
+                    if getattr(event, "is_shot", False):
+                        if event.team_side == "home":
+                            running_h_shots += 1
+                            if getattr(event, "is_shot_on_target", False):
+                                running_h_sot += 1
+                        else:
+                            running_a_shots += 1
+                            if getattr(event, "is_shot_on_target", False):
+                                running_a_sot += 1
 
-                # Build the updated embed
-                score_line = (
-                    f"**{p1.display_name}** ({p1_trophies} 🏆) {running_home} - "
-                    f"{running_away} ({p2_trophies} 🏆) **{p2.display_name}**"
+                    card_type = getattr(event, "card_type", None)
+                    if card_type:
+                        if event.team_side == "home":
+                            running_h_cards.append(card_type)
+                        else:
+                            running_a_cards.append(card_type)
+
+                    if event.event_type != "full_time":
+                        displayed_events.append(f"`{event.minute}'` {event.text}")
+
+                # Harvest any additional tactical events added during step processing
+                while view.tactical_events:
+                    displayed_events.append(view.tactical_events.pop(0))
+
+                is_final = session.is_finished
+
+                # Determine match status badge & period
+                if is_final:
+                    status_badge = "🏁 FULL TIME"
+                elif last_event.event_type == "half_time":
+                    status_badge = "⏱️ HALF TIME"
+                elif last_event.minute <= 45:
+                    status_badge = f"⏱️ {last_event.minute}' • 1st Half"
+                else:
+                    status_badge = f"⏱️ {last_event.minute}' • 2nd Half"
+
+                # Embed Color based on action
+                if is_final:
+                    embed_color = discord.Color.dark_grey()
+                elif any(e.event_type == "goal" for e in batch):
+                    embed_color = discord.Color.green()
+                elif any(getattr(e, "card_type", None) for e in batch):
+                    embed_color = discord.Color.orange()
+                elif any(e.event_type == "save" for e in batch):
+                    embed_color = discord.Color.blue()
+                elif last_event.event_type == "half_time":
+                    embed_color = discord.Color.purple()
+                else:
+                    embed_color = discord.Color.gold()
+
+                embed = discord.Embed(
+                    title=f"🏟️ MatchDex Quick Sim — {'Full Time!' if is_final else 'Live Match'}",
+                    color=embed_color,
                 )
 
-                visible = displayed_events[-12:]
-                hl_text = "\n".join(visible)
-                if len(displayed_events) > 12:
-                    hl_text = "…\n" + hl_text
+                # Header Description
+                phase_title = getattr(last_event, "phase_title", "") or "⚡ ACTION IN PROGRESS"
+                score_header = (
+                    f"## {p1.display_name} ({p1_trophies} 🏆)  ` {running_home} - {running_away} `  ({p2_trophies} 🏆) {p2.display_name}\n"
+                    f"> **{status_badge}** • **{phase_title}**\n\n"
+                    f"📋 Strategies: **{home.display_name}** [{format_tactic_badge(home.tactic)}] ─ [{format_tactic_badge(away.tactic)}] **{away.display_name}**"
+                )
+                embed.description = score_header
 
-                is_final = batch_idx == len(batches) - 1
+                # 1. Pitch Action Radar Field
+                radar_line, zone_desc = render_pitch_radar(
+                    getattr(last_event, "zone", 2),
+                    last_event.event_type,
+                    p1.display_name,
+                    p2.display_name,
+                )
+                embed.add_field(
+                    name="📍 Pitch Action Radar",
+                    value=f"{radar_line}\n{zone_desc}",
+                    inline=False,
+                )
+
+                # 2. Momentum Field
+                mom_str = render_momentum_bar(
+                    getattr(last_event, "home_momentum", int(round(session.current_home_momentum))),
+                    p1.display_name,
+                    p2.display_name,
+                )
+                embed.add_field(
+                    name="📊 Momentum & Possession",
+                    value=mom_str,
+                    inline=True,
+                )
+
+                # 3. Match Stats Field
+                h_yellows = running_h_cards.count("yellow")
+                h_reds = running_h_cards.count("red")
+                a_yellows = running_a_cards.count("yellow")
+                a_reds = running_a_cards.count("red")
+
+                h_disc = f"{h_yellows} 🟨" + (f" {h_reds} 🟥" if h_reds else "")
+                a_disc = f"{a_yellows} 🟨" + (f" {a_reds} 🟥" if a_reds else "")
+
+                stats_str = (
+                    f"Shots (OT): **{running_h_shots} ({running_h_sot})** ─ **{running_a_shots} ({running_a_sot})**\n"
+                    f"Cards: **{h_disc}** ─ **{a_disc}**"
+                )
+                embed.add_field(
+                    name="🎯 Match Stats",
+                    value=stats_str,
+                    inline=True,
+                )
+
+                # 4. Goalscorers Field (if any)
+                if goalscorers:
+                    embed.add_field(
+                        name="⚽ Goalscorers",
+                        value="\n".join(goalscorers[-6:]),
+                        inline=False,
+                    )
+
+                # 5. Live Commentary Feed
+                recent_feed = displayed_events[-4:]
+                embed.add_field(
+                    name="📜 Live Commentary Feed",
+                    value="\n".join(recent_feed) if recent_feed else "`0'` Match starting...",
+                    inline=False,
+                )
 
                 if is_final:
-                    embed = discord.Embed(
-                        title="🏟️ MatchDex Quick Sim — Full Time!",
-                        color=discord.Color.red(),
+                    embed.set_footer(
+                        text="⚡ MatchDex Quick Sim • RFM27 Match Engine • Full Time"
+                    )
+                    for child in view.children:
+                        child.disabled = True
+                elif last_event.event_type == "half_time":
+                    embed.set_footer(
+                        text="⚡ Half-Time Break • Adjust your team strategies below before 2nd Half!"
                     )
                 else:
-                    embed = discord.Embed(
-                        title="🏟️ MatchDex Quick Sim",
-                        color=discord.Color.gold(),
+                    embed.set_footer(
+                        text=f"⚡ MatchDex Quick Sim • Midgame Tactics Active • Phase {step_idx}/{session.total_phases}"
                     )
-
-                embed.description = score_line + "\n\n" + hl_text
-
-                if not is_final:
-                    embed.set_footer(text="⚡ Quick Sim — Live")
-                else:
-                    embed.set_footer(text="⚡ Quick Sim — Match Over")
 
                 try:
-                    await msg.edit(embed=embed)
+                    await msg.edit(embed=embed, view=view)
                 except discord.HTTPException:
                     pass
 
                 if not is_final:
-                    # Check if cancelled before sleeping
-                    if ACTIVE_QUICKSIMS.get(p1.id) == "cancelled" or ACTIVE_QUICKSIMS.get(p2.id) == "cancelled":
-                        embed = discord.Embed(
-                            title="🏟️ MatchDex Quick Sim — Cancelled",
-                            description="The match was cancelled.",
-                            color=discord.Color.red(),
-                        )
-                        try:
-                            await msg.edit(embed=embed)
-                        except discord.HTTPException:
-                            pass
-                        return
+                    is_ht = any(e.event_type == "half_time" for e in batch)
+                    sleep_time = 6 if is_ht else 3
+                    await asyncio.sleep(sleep_time)
 
-                    await asyncio.sleep(3)
+            # Get final match result
+            result = session.get_result()
 
             # ── Awards ────────────────────────────────────────
             from core.models import SimSeason, SimSeasonPlayer
@@ -1055,8 +1320,10 @@ class MatchCog(commands.Cog, name="Matches"):
 
 
             embed.add_field(name="Result", value=result_txt, inline=False)
+            for child in view.children:
+                child.disabled = True
             try:
-                await msg.edit(embed=embed)
+                await msg.edit(embed=embed, view=view)
             except discord.HTTPException:
                 pass
 

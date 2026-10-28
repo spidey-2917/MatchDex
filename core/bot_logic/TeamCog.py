@@ -3,8 +3,12 @@ from asgiref.sync import sync_to_async
 from discord import app_commands
 from discord.ext import commands
 
-from core.models import DiscordUser, Lineup, UserCard
-from core.utils import player_autocomplete
+from core.models import (
+    DiscordUser, Lineup, UserCard, CardTemplate,
+    Manager, UserManager, UserOwnedManager,
+    Logo, UserLogo, UserOwnedLogo
+)
+from core.utils import player_autocomplete, template_autocomplete
 
 # ── Formation configs ───────────────────────────────────────────
 FORMATIONS = {
@@ -179,7 +183,13 @@ class TeamCog(commands.Cog, name="Teams"):
         def get_lineup_data():
             lineup = Lineup.objects.filter(owner=user, is_active=True).first()
             if not lineup:
-                return None, None, None, None
+                return None, None, None, None, None, None, None, None
+
+            from core.models import UserManager, UserLogo
+            um = UserManager.objects.select_related("manager").filter(owner=user).first()
+            ul = UserLogo.objects.select_related("logo").filter(owner=user).first()
+            equipped_manager = um.manager if um else None
+            equipped_logo = ul.logo if ul else None
 
             formation_key = lineup.formation
             f_info = FORMATIONS.get(formation_key, FORMATIONS["433"])
@@ -196,8 +206,28 @@ class TeamCog(commands.Cog, name="Teams"):
                 if card:
                     # Force evaluation of the template FK
                     template = card.template
+                    badges = []
+                    tier = getattr(card, "upgrade_tier", "NONE")
+                    if tier == "SILVER":
+                        badges.append("🥈 +5%")
+                    elif tier == "GOLD":
+                        badges.append("🥇 +10%")
+                    elif tier == "DIAMOND":
+                        badges.append("💎 +25%")
+
+                    ref = getattr(card, "refractor", "NONE")
+                    if ref == "RED":
+                        badges.append("🔴 Red Edge")
+                    elif ref == "RAINBOW":
+                        badges.append("🌈 Rainbow Edge")
+                    elif ref == "BLACK":
+                        badges.append("🖤 Black Edge")
+                    elif ref == "GOLD":
+                        badges.append("🟡 Gold Edge")
+
+                    badge_suffix = f" [{' | '.join(badges)}]" if badges else ""
                     sections[group].append(
-                        f"• **{template.name}** ({template.position}) — {template.ovr} OVR"
+                        f"• **{template.name}** ({template.position}) — {template.ovr} OVR{badge_suffix}"
                     )
                     pitch_data[slot_name] = {"ovr": template.ovr, "name": template.name}
                 else:
@@ -215,7 +245,7 @@ class TeamCog(commands.Cog, name="Teams"):
                 else:
                     sub_lines.append(f"• *Empty* ({s.upper()})")
 
-            return formation_key, f_info, sections, (power, filled, total), sub_lines, pitch_data
+            return formation_key, f_info, sections, (power, filled, total), sub_lines, pitch_data, equipped_manager, equipped_logo
 
         result = await get_lineup_data()
 
@@ -225,13 +255,29 @@ class TeamCog(commands.Cog, name="Teams"):
             )
             return
 
-        formation_key, f_info, sections, stats, sub_lines, pitch_data = result
+        formation_key, f_info, sections, stats, sub_lines, pitch_data, equipped_manager, equipped_logo = result
         power, filled, total = stats
+
+        desc_lines = []
+        if equipped_manager:
+            from core.bot_logic.quick_sim import normalize_formation_str
+            norm_m = normalize_formation_str(equipped_manager.preferred_formation)
+            norm_f = normalize_formation_str(formation_key)
+            has_syn = (norm_m == "all" or norm_m == norm_f)
+            syn_label = f"🟢 Formation Synergy (+{equipped_manager.formation_boost_pct}% {equipped_manager.formation_boost_type})" if has_syn else "⚪ No Formation Synergy"
+            desc_lines.append(f"👔 **Manager:** {equipped_manager.name} ({syn_label})")
+        else:
+            desc_lines.append("👔 **Manager:** None (Use `/manager equip`)")
+
+        if equipped_logo:
+            desc_lines.append(f"🛡️ **Logo:** {equipped_logo.name} (+{equipped_logo.boost_val})")
+
+        desc_lines.append(f"**Formation:** {f_info['name']}")
 
         # Build embed
         embed = discord.Embed(
             title=f"🏆 {target.name}'s Squad",
-            description=f"**Formation:** {f_info['name']}",
+            description="\n".join(desc_lines),
             color=discord.Color.blue(),
         )
 
@@ -654,6 +700,414 @@ class TeamCog(commands.Cog, name="Teams"):
             f"{emoji} Tactic set to **{tactic.name}**!",
             ephemeral=True,
         )
+
+    # ── Manager Command Group ────────────────────────────────────
+    manager_group = app_commands.Group(
+        name="manager", description="Manage your squad manager and tactical boosts"
+    )
+
+    async def owned_manager_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        @sync_to_async
+        def get_choices():
+            qs = UserOwnedManager.objects.filter(user_id=interaction.user.id).select_related("manager")
+            if current:
+                qs = qs.filter(manager__name__icontains=current)
+            return list(qs[:25])
+        items = await get_choices()
+        return [
+            app_commands.Choice(
+                name=f"{item.manager.name} ({item.manager.preferred_formation} | +{item.manager.formation_boost_pct}% {item.manager.formation_boost_type})",
+                value=item.manager.name
+            )
+            for item in items
+        ]
+
+    @manager_group.command(name="view", description="View your currently equipped manager")
+    async def manager_view(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=False)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def get_mgr():
+            um = UserManager.objects.select_related("manager").filter(owner=user).first()
+            if not um:
+                return None, None
+            lineup = Lineup.objects.filter(owner=user, is_active=True).first()
+            form = lineup.formation if lineup else "None"
+            tactic = lineup.tactic if lineup else "balanced"
+            return um.manager, (form, tactic)
+
+        mgr, squad_info = await get_mgr()
+        if not mgr:
+            return await interaction.followup.send(
+                "👔 You don't have a manager equipped! Use `/manager equip` to equip one from your collection.",
+                ephemeral=True
+            )
+
+        form, tactic = squad_info
+        from core.bot_logic.quick_sim import normalize_formation_str
+        form_syn = normalize_formation_str(mgr.preferred_formation) in ("all", normalize_formation_str(form))
+        tactic_syn = (mgr.preferred_tactic == "ALL" or mgr.preferred_tactic.lower() == (tactic or "").lower())
+
+        embed = discord.Embed(
+            title=f"👔 Manager: {mgr.name}",
+            description=f"**Nationality:** {mgr.nationality or 'Unknown'} | **Rarity:** {mgr.rarity}",
+            color=discord.Color.gold()
+        )
+        embed.add_field(
+            name="📐 Preferred Formation",
+            value=f"`{mgr.preferred_formation}` — Boost: **+{mgr.formation_boost_pct}% {mgr.formation_boost_type}**\n"
+                  f"Status: {'🟢 Active Synergy' if form_syn else f'⚪ Inactive (Your squad uses `{form}`)'}",
+            inline=False
+        )
+        if mgr.tactic_boost_pct > 0 and mgr.tactic_boost_type != "NONE":
+            embed.add_field(
+                name="⚡ Preferred Tactic",
+                value=f"`{mgr.preferred_tactic.capitalize()}` — Boost: **+{mgr.tactic_boost_pct}% {mgr.tactic_boost_type}**\n"
+                      f"Status: {'🟢 Active Synergy' if tactic_syn else f'⚪ Inactive (Your tactic is `{tactic.capitalize()}`)'}",
+                inline=False
+            )
+        embed.set_footer(text="Managers provide powerful stat boosts in Quick Sim matches!")
+        await interaction.followup.send(embed=embed)
+
+    @manager_group.command(name="list", description="List all managers in your collection")
+    async def manager_list(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=False)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def get_all():
+            um = UserManager.objects.filter(owner=user).first()
+            equipped_id = um.manager_id if um else None
+            owned = list(UserOwnedManager.objects.filter(user=user).select_related("manager").order_by("manager__name"))
+            return owned, equipped_id
+
+        owned, eq_id = await get_all()
+        if not owned:
+            return await interaction.followup.send(
+                "👔 You don't own any managers yet! Catch them in wild spawns or with `/drop`.",
+                ephemeral=True
+            )
+
+        lines = []
+        for item in owned:
+            m = item.manager
+            tag = " ⭐ **[EQUIPPED]**" if m.id == eq_id else ""
+            lines.append(
+                f"• **{m.name}** ({m.rarity}){tag}\n"
+                f"  Formation: `{m.preferred_formation}` (+{m.formation_boost_pct}% {m.formation_boost_type})"
+            )
+
+        embed = discord.Embed(
+            title=f"👔 {interaction.user.display_name}'s Manager Locker ({len(owned)})",
+            description="\n\n".join(lines),
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="Use /manager equip <name> to lead your team!")
+        await interaction.followup.send(embed=embed)
+
+    @manager_group.command(name="equip", description="Equip a manager from your locker")
+    @app_commands.describe(manager_name="Name of the manager to equip")
+    async def manager_equip(self, interaction: discord.Interaction, manager_name: str):
+        await interaction.response.defer(ephemeral=True)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def do_equip():
+            item = UserOwnedManager.objects.filter(user=user, manager__name__iexact=manager_name).select_related("manager").first()
+            if not item:
+                return None
+            UserManager.objects.update_or_create(owner=user, defaults={"manager": item.manager})
+            return item.manager
+
+        mgr = await do_equip()
+        if not mgr:
+            return await interaction.followup.send(
+                f"❌ You don't own a manager named **{manager_name}**! Check `/manager list`.",
+                ephemeral=True
+            )
+
+        await interaction.followup.send(
+            f"✅ **{mgr.name}** is now your active club manager!\n"
+            f"Formation: `{mgr.preferred_formation}` (+{mgr.formation_boost_pct}% {mgr.formation_boost_type})",
+            ephemeral=True
+        )
+
+    # ── Logo Command Group ───────────────────────────────────────
+    logo_group = app_commands.Group(
+        name="logo", description="Manage your club logo and crest boosts"
+    )
+
+    async def owned_logo_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        @sync_to_async
+        def get_choices():
+            qs = UserOwnedLogo.objects.filter(user_id=interaction.user.id).select_related("logo")
+            if current:
+                qs = qs.filter(logo__name__icontains=current)
+            return list(qs[:25])
+        items = await get_choices()
+        return [
+            app_commands.Choice(
+                name=f"{item.logo.name} (+{item.logo.boost_val})",
+                value=item.logo.name
+            )
+            for item in items
+        ]
+
+    @logo_group.command(name="view", description="View your currently equipped club logo")
+    async def logo_view(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=False)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def get_logo():
+            ul = UserLogo.objects.select_related("logo").filter(owner=user).first()
+            return ul.logo if ul else None
+
+        logo = await get_logo()
+        if not logo:
+            return await interaction.followup.send(
+                "🛡️ You don't have a logo equipped! Use `/logo equip` to equip one.",
+                ephemeral=True
+            )
+
+        embed = discord.Embed(
+            title=f"🛡️ Equipped Logo: {logo.name}",
+            description=f"**Club:** {logo.club or 'Custom'} | **Rarity:** {logo.rarity}\n**Bonus:** +{logo.boost_val} to team stats",
+            color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed)
+
+    @logo_group.command(name="list", description="List all club logos in your collection")
+    async def logo_list(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=False)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def get_all():
+            ul = UserLogo.objects.filter(owner=user).first()
+            eq_id = ul.logo_id if ul else None
+            owned = list(UserOwnedLogo.objects.filter(user=user).select_related("logo").order_by("logo__name"))
+            return owned, eq_id
+
+        owned, eq_id = await get_all()
+        if not owned:
+            return await interaction.followup.send(
+                "🛡️ You don't own any logos yet! Catch them in wild spawns or with `/drop`.",
+                ephemeral=True
+            )
+
+        lines = [
+            f"• **{item.logo.name}** (+{item.logo.boost_val} {item.logo.rarity})" + (" ⭐ **[EQUIPPED]**" if item.logo.id == eq_id else "")
+            for item in owned
+        ]
+        embed = discord.Embed(
+            title=f"🛡️ {interaction.user.display_name}'s Club Crests ({len(owned)})",
+            description="\n".join(lines),
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="Use /logo equip <name> to set your team crest!")
+        await interaction.followup.send(embed=embed)
+
+    @logo_group.command(name="equip", description="Equip a club logo from your collection")
+    @app_commands.describe(logo_name="Name of the logo to equip")
+    async def logo_equip(self, interaction: discord.Interaction, logo_name: str):
+        await interaction.response.defer(ephemeral=True)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def do_equip():
+            item = UserOwnedLogo.objects.filter(user=user, logo__name__iexact=logo_name).select_related("logo").first()
+            if not item:
+                return None
+            UserLogo.objects.update_or_create(owner=user, defaults={"logo": item.logo})
+            return item.logo
+
+        logo = await do_equip()
+        if not logo:
+            return await interaction.followup.send(
+                f"❌ You don't own a logo named **{logo_name}**! Check `/logo list`.",
+                ephemeral=True
+            )
+
+        await interaction.followup.send(
+            f"✅ **{logo.name}** is now your active club crest (+{logo.boost_val} stat bonus)!",
+            ephemeral=True
+        )
+
+    # ── /dupes Command ──────────────────────────────────────────
+    @app_commands.command(name="dupes", description="Show your amount of duplicate copies for a card")
+    @app_commands.describe(card="Card name to check duplicates for")
+    @app_commands.autocomplete(card=template_autocomplete)
+    async def dupes(self, interaction: discord.Interaction, card: str):
+        await interaction.response.defer(ephemeral=False)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def check_dupes():
+            qs = CardTemplate.objects.all()
+            if "|" in card:
+                name, ev = card.split("|", 1)
+                t = qs.filter(name=name, event_name=ev).first()
+            else:
+                t = qs.filter(name__iexact=card).first() or qs.filter(name__icontains=card).first()
+
+            if not t:
+                return None, 0, []
+
+            owned_cards = list(UserCard.objects.filter(owner=user, template=t).order_by("-caught_at"))
+            return t, len(owned_cards), owned_cards
+
+        template, count, owned_cards = await check_dupes()
+        if not template:
+            return await interaction.followup.send(f"❌ No card template found matching **'{card}'**.", ephemeral=True)
+
+        if count == 0:
+            return await interaction.followup.send(
+                f"📦 You do not own any copies of **{template.display_name}** ({template.rarity}).",
+                ephemeral=True
+            )
+
+        if count >= 50:
+            next_upgrade = "💎 **Diamond Tier** ready! Use `/upgrade`"
+        elif count >= 25:
+            next_upgrade = f"🥇 **Gold Tier** ready! ({count}/50 for Diamond)"
+        elif count >= 10:
+            next_upgrade = f"🥈 **Silver Tier** ready! ({count}/25 for Gold)"
+        else:
+            next_upgrade = f"⚪ Need **{10 - count}** more copies for 🥈 Silver Tier"
+
+        embed = discord.Embed(
+            title=f"🃏 Duplicate Copies: {template.display_name}",
+            description=f"You own **{count}** copies of this card.\n\n"
+                        f"**Next Upgrade:** {next_upgrade}",
+            color=discord.Color.gold()
+        )
+        embed.add_field(
+            name="📊 Upgrade Requirements",
+            value="• 🥈 **Silver (10 copies)**: +5% ATK & DEF boost\n"
+                  "• 🥇 **Gold (25 copies)**: +10% ATK & DEF boost\n"
+                  "• 💎 **Diamond (50 copies)**: +25% ATK & DEF boost",
+            inline=False
+        )
+        embed.set_footer(text="Use /upgrade to power up your card using duplicates!")
+        await interaction.followup.send(embed=embed)
+
+    # ── /upgrade Command ────────────────────────────────────────
+    @app_commands.command(name="upgrade", description="Upgrade a card using duplicate copies for a stat boost")
+    @app_commands.describe(card="Card name to upgrade")
+    @app_commands.autocomplete(card=template_autocomplete)
+    async def upgrade(self, interaction: discord.Interaction, card: str):
+        await interaction.response.defer(ephemeral=False)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def perform_upgrade():
+            qs = CardTemplate.objects.all()
+            if "|" in card:
+                name, ev = card.split("|", 1)
+                t = qs.filter(name=name, event_name=ev).first()
+            else:
+                t = qs.filter(name__iexact=card).first() or qs.filter(name__icontains=card).first()
+
+            if not t:
+                return "not_found", None, None, None
+
+            owned = list(UserCard.objects.filter(owner=user, template=t).order_by("caught_at"))
+            if not owned:
+                return "not_owned", t, None, None
+
+            lineup = Lineup.objects.filter(owner=user, is_active=True).first()
+            active_ids = set()
+            if lineup:
+                for s in get_formation_slots(lineup.formation) + ["sub1", "sub2", "sub3"]:
+                    c = getattr(lineup, s, None)
+                    if c:
+                        active_ids.add(c.id)
+
+            target_card = None
+            for c in owned:
+                if c.id in active_ids:
+                    target_card = c
+                    break
+            if not target_card:
+                target_card = owned[0]
+
+            curr_tier = target_card.upgrade_tier
+            if curr_tier == "NONE":
+                target_tier = "SILVER"
+                needed_copies = 10
+                boost_str = "+5% ATK & DEF"
+            elif curr_tier == "SILVER":
+                target_tier = "GOLD"
+                needed_copies = 25
+                boost_str = "+10% ATK & DEF"
+            elif curr_tier == "GOLD":
+                target_tier = "DIAMOND"
+                needed_copies = 50
+                boost_str = "+25% ATK & DEF"
+            else:
+                return "max_tier", t, target_card, None
+
+            burn_candidates = [c for c in owned if c.id != target_card.id and c.id not in active_ids]
+            if len(burn_candidates) < needed_copies:
+                return "insufficient", t, (len(burn_candidates), needed_copies, target_tier), None
+
+            burn_ids = [c.id for c in burn_candidates[:needed_copies]]
+            UserCard.objects.filter(id__in=burn_ids).delete()
+
+            target_card.upgrade_tier = target_tier
+            target_card.save(update_fields=["upgrade_tier"])
+
+            return "success", t, target_tier, (needed_copies, boost_str, target_card)
+
+        status, t, data1, data2 = await perform_upgrade()
+        if status == "not_found":
+            return await interaction.followup.send(f"❌ No card matching **'{card}'**.", ephemeral=True)
+        elif status == "not_owned":
+            return await interaction.followup.send(f"❌ You don't own any copies of **{t.display_name}**.", ephemeral=True)
+        elif status == "max_tier":
+            return await interaction.followup.send(f"💎 **{t.display_name}** is already at maximum Diamond tier (+25%)!", ephemeral=True)
+        elif status == "insufficient":
+            avail, needed, target_tier = data1
+            return await interaction.followup.send(
+                f"❌ Insufficient duplicates! You have **{avail}** sacrificeable duplicates, but need **{needed}** copies to upgrade to **{target_tier}**.\n*(Note: Cards currently in your active squad lineup cannot be sacrificed)*",
+                ephemeral=True
+            )
+
+        target_tier = data1
+        needed_copies, boost_str, target_card = data2
+        badge = "🥈" if target_tier == "SILVER" else ("🥇" if target_tier == "GOLD" else "💎")
+
+        embed = discord.Embed(
+            title=f"🎉 Card Upgraded: {target_card.template.display_name}!",
+            description=f"{badge} **{target_card.template.name}** has reached **{target_tier.title()} Tier**!\n\n"
+                        f"⚡ **Stat Boost:** **{boost_str}** in Quick Sim matches\n"
+                        f"🔥 **Sacrificed:** {needed_copies} duplicate copies",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text=f"Card ID: #{target_card.card_id} • Enjoy your powered-up card on the pitch!")
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):

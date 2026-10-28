@@ -94,7 +94,10 @@ class GeneralCog(commands.Cog, name="General"):
 
         if event_breakdown:
             event_text = ""
-            # Map common event names to emojis if possible, else generic
+            import json
+            import os
+            from core.settings import settings
+
             emoji_map = {
                 "Shiny": "✨",
                 "Christmas": "🎄",
@@ -102,11 +105,22 @@ class GeneralCog(commands.Cog, name="General"):
                 "Ramadan_white": "☪️",
                 "Diwali_white": "🕯️",
                 "Halloween_white": "🦇",
+                "Halloween": "🎃",
                 "Eid_white": "🌙",
                 "Icon": "🏆",
                 "TOTY": "⭐",
-                "TOTS": "🔥"
+                "TOTS": "🔥",
+                "UCL": "⚽",
             }
+            try:
+                json_path = os.path.join(settings.BASE_DIR, "core", "event_emojis.json")
+                if os.path.exists(json_path):
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        custom_map = json.load(f)
+                        if isinstance(custom_map, dict):
+                            emoji_map.update(custom_map)
+            except Exception:
+                pass
             
             for item in event_breakdown:
                 name = item['template__event_name']
@@ -174,6 +188,125 @@ class GeneralCog(commands.Cog, name="General"):
 
         await interaction.followup.send(file=file, embed=embed)
 
+    @app_commands.command(name="vote", description="Vote for MatchDex on Top.gg and receive rewards")
+    async def vote(self, interaction: discord.Interaction):
+        bot_id = self.bot.user.id if self.bot.user else 1344605994326523934
+        vote_url = f"https://top.gg/bot/{bot_id}/vote"
+
+        embed = discord.Embed(
+            title="🗳️ Vote for MatchDex on Top.gg!",
+            description=(
+                "Support the bot by voting on Top.gg and earn exclusive rewards!\n\n"
+                "**🎁 Voting Rewards:**\n"
+                "• **1x Free Base Pack** (or 2x on Top.gg Weekends!)\n"
+                "• **250 Bonus Points**\n"
+                "• Multiplier boost on streak votes!\n\n"
+                f"[👉 **Click here to vote on Top.gg**]({vote_url})"
+            ),
+            color=discord.Color.gold(),
+        )
+        embed.set_footer(text="You can vote once every 12 hours.")
+
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(label="Vote on Top.gg", url=vote_url, style=discord.ButtonStyle.link, emoji="🗳️"))
+        await interaction.response.send_message(embed=embed, view=view)
+
+    @app_commands.command(name="tutorial", description="Learn how MatchDex works and receive your Starter Pack of 11 cards!")
+    async def tutorial(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        from core.models import CardTemplate, Lineup, UserCard
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id,
+            defaults={"username": interaction.user.name},
+        )
+
+        starter_pack_granted = False
+        starter_cards = []
+
+        if not user.has_completed_tutorial:
+            @sync_to_async
+            def grant_starter_pack():
+                # Pick 11 cards: 1 GK, 4 DEF, 3 MID, 3 ATT
+                gk_qs = list(CardTemplate.objects.filter(position="GK").exclude(card_type="PREMIUM").order_by("?")[:1])
+                def_qs = list(CardTemplate.objects.filter(position__in=["CB", "LB", "RB", "LWB", "RWB"]).exclude(card_type="PREMIUM").order_by("?")[:4])
+                mid_qs = list(CardTemplate.objects.filter(position__in=["CM", "CDM", "CAM", "LM", "RM"]).exclude(card_type="PREMIUM").order_by("?")[:3])
+                att_qs = list(CardTemplate.objects.filter(position__in=["ST", "CF", "RW", "LW"]).exclude(card_type="PREMIUM").order_by("?")[:3])
+
+                selected = gk_qs + def_qs + mid_qs + att_qs
+                # Fallback if any position lacked templates
+                if len(selected) < 11:
+                    existing_ids = [t.id for t in selected]
+                    needed = 11 - len(selected)
+                    fillers = list(CardTemplate.objects.exclude(card_type="PREMIUM").exclude(id__in=existing_ids).order_by("?")[:needed])
+                    selected.extend(fillers)
+
+                created_cards = []
+                for tmpl in selected:
+                    uc = UserCard.objects.create(owner=user, template=tmpl)
+                    created_cards.append(uc)
+
+                user.cards_collected += len(created_cards)
+                user.has_completed_tutorial = True
+                user.save()
+
+                # If user doesn't have an active lineup, create and equip one
+                if created_cards and not Lineup.objects.filter(owner=user).exists():
+                    Lineup.objects.create(
+                        owner=user,
+                        name="Main Squad",
+                        is_active=True,
+                        formation="433",
+                        tactic="balanced",
+                        gk=created_cards[0] if len(created_cards) > 0 else None,
+                        df1=created_cards[1] if len(created_cards) > 1 else None,
+                        df2=created_cards[2] if len(created_cards) > 2 else None,
+                        df3=created_cards[3] if len(created_cards) > 3 else None,
+                        df4=created_cards[4] if len(created_cards) > 4 else None,
+                        md1=created_cards[5] if len(created_cards) > 5 else None,
+                        md2=created_cards[6] if len(created_cards) > 6 else None,
+                        md3=created_cards[7] if len(created_cards) > 7 else None,
+                        at1=created_cards[8] if len(created_cards) > 8 else None,
+                        at2=created_cards[9] if len(created_cards) > 9 else None,
+                        at3=created_cards[10] if len(created_cards) > 10 else None,
+                    )
+                return created_cards
+
+            starter_cards = await grant_starter_pack()
+            starter_pack_granted = True
+
+        embed = discord.Embed(
+            title="📖 Welcome to MatchDex — Beginner's Guide",
+            description=(
+                "**MatchDex** is a football card collecting and simulation bot where you build your dream club, "
+                "compete in tactical simulations, sign world-class managers, and collect rare refractors!\n\n"
+                "**Core Gameplay Commands:**\n"
+                "• `📦 /drop` — Drop a random card, manager, or logo (1h cooldown)\n"
+                "• `⚔️ /quick_sim <opponent>` — Play simulated matches with dynamic tactics\n"
+                "• `📋 /team_view` — View your active squad, formation, and manager synergy\n"
+                "• `👔 /manager view|list|equip` — Sign & manage tactical coaches\n"
+                "• `🛡️ /logo view|list|equip` — Collect and equip club crests for rating boosts\n"
+                "• `⚡ /dupes & /upgrade` — Burn duplicate cards for Silver (+5%), Gold (+10%), & Diamond (+25%) boosts\n"
+                "• `🎯 /objectives & /weekly` — Complete daily and weekly tasks for free packs and points\n"
+                "• `❤️ /favorite` — View and showcase your top 10 favorite cards\n"
+                "• `🗳️ /vote` — Vote on Top.gg every 12h for bonus packs and points"
+            ),
+            color=discord.Color.green(),
+        )
+
+        if starter_pack_granted and starter_cards:
+            roster_lines = []
+            for c in starter_cards:
+                roster_lines.append(f"• **{c.template.name}** ({c.template.ovr} OVR | {c.template.position})")
+            embed.add_field(
+                name="🎁 Starter Pack Granted! (11 Starting Cards)",
+                value="\n".join(roster_lines) + "\n\n✅ *These 11 players have been automatically slotted into your starting lineup! Check them out with `/team_view`.*",
+                inline=False
+            )
+        else:
+            embed.set_footer(text="ℹ️ You have already claimed your starter pack. Keep playing with /drop and /quick_sim!")
+
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):

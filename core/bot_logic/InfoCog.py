@@ -156,12 +156,24 @@ class InfoCog(commands.Cog, name="Info"):
         except discord.Forbidden:
             await interaction.response.send_message("I couldn't send you a DM. Please check your privacy settings!\n\n" + message_content, ephemeral=True)
 
-    # ── /favourite ───────────────────────────────────────────
+    # ── /favorite & /favourite ───────────────────────────────
+    @app_commands.command(
+        name="favorite",
+        description="Show your favorite cards (max 10) or toggle a card as favorite",
+    )
+    @app_commands.describe(card_id="Card ID to toggle as favorite (optional - leave empty to view list)")
+    async def favorite(self, interaction: discord.Interaction, card_id: str | None = None):
+        await self._handle_favorite(interaction, card_id)
+
     @app_commands.command(
         name="favourite",
-        description="Toggle a card as favourite (shows a ❤️ in your collection)",
+        description="Show your favourite cards (max 10) or toggle a card as favourite",
     )
-    async def favourite(self, interaction: discord.Interaction, card_id: str):
+    @app_commands.describe(card_id="Card ID to toggle as favourite (optional - leave empty to view list)")
+    async def favourite(self, interaction: discord.Interaction, card_id: str | None = None):
+        await self._handle_favorite(interaction, card_id)
+
+    async def _handle_favorite(self, interaction: discord.Interaction, card_id: str | None = None):
         from core.models import DiscordUser, FavouriteCard, UserCard
 
         user, _ = await DiscordUser.objects.aget_or_create(
@@ -169,6 +181,44 @@ class InfoCog(commands.Cog, name="Info"):
             defaults={"username": interaction.user.name},
         )
 
+        # 1. If no card_id, display the list of favorite cards (max 10)
+        if not card_id:
+            @sync_to_async
+            def get_favs():
+                return list(
+                    FavouriteCard.objects.filter(owner=user)
+                    .select_related("card", "card__template")
+                    .order_by("-card__template__ovr")[:10]
+                )
+
+            favs = await get_favs()
+            if not favs:
+                await interaction.response.send_message(
+                    "❤️ You don't have any favorite cards yet!\nUse `/favorite <card_id>` to add cards to your favorites (max 10).",
+                    ephemeral=True,
+                )
+                return
+
+            embed = discord.Embed(
+                title=f"❤️ {interaction.user.display_name}'s Favorite Cards",
+                description=f"Showing your favorite cards ({len(favs)}/10 max):\n*Use `/favorite <card_id>` to add or remove cards.*",
+                color=discord.Color.red(),
+            )
+            for idx, fav in enumerate(favs):
+                card = fav.card
+                tmpl = card.template
+                tier_badge = f" • [{card.upgrade_tier}]" if card.upgrade_tier != "NONE" else ""
+                ref_badge = f" • ✨ {card.refractor}" if card.refractor != "NONE" else ""
+                embed.add_field(
+                    name=f"{idx+1}. {tmpl.display_name} ({tmpl.ovr} OVR | {tmpl.position})",
+                    value=f"ID: `#{card.card_id}` • Rarity: {tmpl.rarity}{tier_badge}{ref_badge}",
+                    inline=False,
+                )
+
+            await interaction.response.send_message(embed=embed)
+            return
+
+        # 2. Toggle card_id
         @sync_to_async
         def toggle():
             try:
@@ -183,9 +233,8 @@ class InfoCog(commands.Cog, name="Info"):
                 fav.delete()
                 return card.template.name, False
             else:
-                # Enforce limit
                 count = FavouriteCard.objects.filter(owner=user).count()
-                if count >= 50:
+                if count >= 10:
                     return "LIMIT", True
                 FavouriteCard.objects.create(owner=user, card=card)
                 return card.template.name, True
@@ -198,16 +247,16 @@ class InfoCog(commands.Cog, name="Info"):
             )
         elif name == "LIMIT":
             await interaction.response.send_message(
-                "You've hit the **50 favourite** limit. " "Unfavourite a card first.",
+                "You've hit the **10 favorite cards** limit. Remove a favorite first using `/favorite <card_id>`.",
                 ephemeral=True,
             )
         elif is_fav:
             await interaction.response.send_message(
-                f"❤️ **{name}** is now a favourite!", ephemeral=True
+                f"❤️ **{name}** (`#{card_id}`) is now in your favorites! (Max 10)", ephemeral=True
             )
         else:
             await interaction.response.send_message(
-                f"💔 **{name}** removed from favourites.", ephemeral=True
+                f"💔 **{name}** (`#{card_id}`) removed from favorites.", ephemeral=True
             )
 
     # ── /completion ──────────────────────────────────────────

@@ -2,6 +2,16 @@ import logging
 import math
 import os
 import sys
+
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import time
 import traceback
 from datetime import datetime, timezone
@@ -309,7 +319,7 @@ class MatchdexBot(commands.AutoShardedBot):
         from rich.console import Console
         from rich.table import Table
 
-        console = Console()
+        console = Console(force_terminal=False, legacy_windows=False)
         table = Table(show_header=True, header_style="bold magenta", title="Extension Loading State")
         table.add_column("Package", style="cyan")
         table.add_column("Status", justify="center")
@@ -319,13 +329,17 @@ class MatchdexBot(commands.AutoShardedBot):
             try:
                 await self.load_extension(package)
                 loaded.append(package.rsplit(".", 1)[-1])
-                table.add_row(package, "[green]✅ Success[/green]")
+                table.add_row(package, "[green]Success[/green]")
+                log.info("Loaded package: %s", package)
             except Exception:
                 log.error("Failed to load %s", package, exc_info=True)
-                table.add_row(package, "[red]❌ Failed[/red]")
+                table.add_row(package, "[red]Failed[/red]")
 
         if loaded:
-            console.print(table)
+            try:
+                console.print(table)
+            except Exception:
+                log.info("Packages loaded: %s", ", ".join(loaded))
 
         # Automatic global sync removed for extremely fast boot times! 
         # But we need to sync globals right now because admin commands became global.

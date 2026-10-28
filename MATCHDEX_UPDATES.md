@@ -1,5 +1,10 @@
 # MatchDex Updates - What's New!
 
+> 🚀 **Looking for the latest major update?** See the full [MATCHDEX_LATEST_UPDATES.md](file:///c:/MatchDex-main%20-%20Copy/MATCHDEX_LATEST_UPDATES.md) for Manager & Logo inventory, Card Upgrades & Dupes, Refractors, /drop, Weekly Objectives, /favorite showcase, /vote, /tutorial, and more!
+
+---
+
+## 🌟 Legacy Release Highlights
 We've just pushed a massive update to MatchDex! Here is a breakdown of all the exciting new features and changes you will see:
 
 ## 🌟 New Rarity System & Premium Cards

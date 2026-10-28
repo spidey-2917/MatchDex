@@ -108,9 +108,27 @@ class AdminCog(commands.Cog, name="Admin"):
         event="Filter spawns to a specific event (optional)",
         min_ovr="Minimum OVR for spawns (optional)",
         max_ovr="Maximum OVR for spawns (optional)",
+        include_premium="Allow premium cards to spawn (default False)",
+        refractor="Force a refractor edition on spawned cards (optional)",
     )
+    @app_commands.choices(refractor=[
+        app_commands.Choice(name="Standard (Normal random roll)", value="NONE"),
+        app_commands.Choice(name="Red Edge Refractor (1/50)", value="RED"),
+        app_commands.Choice(name="Rainbow Edge Refractor (1/100)", value="RAINBOW"),
+        app_commands.Choice(name="Black Edge Refractor (1/250)", value="BLACK"),
+        app_commands.Choice(name="Gold Edge Refractor (1/800)", value="GOLD"),
+    ])
     @app_commands.autocomplete(event=event_autocomplete)
-    async def spawn_random(self, interaction: discord.Interaction, count: int = 5, event: str | None = None, min_ovr: int | None = None, max_ovr: int | None = None):
+    async def spawn_random(
+        self,
+        interaction: discord.Interaction,
+        count: int = 5,
+        event: str | None = None,
+        min_ovr: int | None = None,
+        max_ovr: int | None = None,
+        include_premium: bool = False,
+        refractor: str = "NONE",
+    ):
         if not await self.check_admin(interaction):
             return
 
@@ -134,8 +152,9 @@ class AdminCog(commands.Cog, name="Admin"):
         count = max(1, min(count, 15))
         event_label = f" (event: {event})" if event else ""
         ovr_label = f" (OVR {min_ovr}-{max_ovr})" if min_ovr is not None and max_ovr is not None else ""
+        premium_label = " [Premium Allowed]" if include_premium else ""
         await interaction.response.send_message(
-            f"Spawning {count} card(s){event_label}{ovr_label}…", ephemeral=True
+            f"Spawning {count} card(s){event_label}{ovr_label}{premium_label}…", ephemeral=True
         )
 
         from core.utils import pick_random_card
@@ -146,7 +165,9 @@ class AdminCog(commands.Cog, name="Admin"):
         for _ in range(count):
             @sync_to_async
             def _pick_card():
-                qs = CardTemplate.objects.exclude(card_type="PREMIUM")
+                qs = CardTemplate.objects.all()
+                if not include_premium:
+                    qs = qs.exclude(card_type="PREMIUM")
                 if min_ovr is not None:
                     qs = qs.filter(ovr__gte=min_ovr)
                 if max_ovr is not None:
@@ -165,7 +186,7 @@ class AdminCog(commands.Cog, name="Admin"):
                 await interaction.followup.send(f"Error: Could not find any card matching the criteria (Event: {event}, OVR: {min_ovr}-{max_ovr}).", ephemeral=True)
                 break
 
-            image_buffer = await asyncio.to_thread(generate_card_image, card)
+            image_buffer = await asyncio.to_thread(generate_card_image, card, refractor if refractor != "NONE" else "NONE")
             file = discord.File(fp=image_buffer, filename=f"{card.name}.png")
 
             embed = discord.Embed(
@@ -178,7 +199,7 @@ class AdminCog(commands.Cog, name="Admin"):
                 text=f"Rarity: {card.rarity} | Position: {card.position} | OVR: {card.ovr}"
             )
 
-            view = CatchView(card)
+            view = CatchView(card, force_refractor=(refractor if refractor != "NONE" else None))
             message = await interaction.channel.send(file=file, embed=embed, view=view)
             view.message = message
             spawned += 1
@@ -191,13 +212,25 @@ class AdminCog(commands.Cog, name="Admin"):
     @spawn_group.command(name="card", description="Spawn a specific named player card")
     @app_commands.autocomplete(player_name=template_autocomplete)
     @app_commands.describe(
-        player_name="The player to spawn", event="Specific event name (optional)"
+        player_name="The player to spawn",
+        event="Specific event name (optional)",
+        allow_premium="Allow spawning a premium card (default False)",
+        refractor="Force a specific refractor edition (optional)",
     )
+    @app_commands.choices(refractor=[
+        app_commands.Choice(name="Standard (Normal random roll)", value="NONE"),
+        app_commands.Choice(name="Red Edge Refractor (1/50)", value="RED"),
+        app_commands.Choice(name="Rainbow Edge Refractor (1/100)", value="RAINBOW"),
+        app_commands.Choice(name="Black Edge Refractor (1/250)", value="BLACK"),
+        app_commands.Choice(name="Gold Edge Refractor (1/800)", value="GOLD"),
+    ])
     async def spawn_card(
         self,
         interaction: discord.Interaction,
         player_name: str,
         event: str | None = None,
+        allow_premium: bool = False,
+        refractor: str = "NONE",
     ):
         if not await self.check_admin(interaction):
             return
@@ -239,7 +272,14 @@ class AdminCog(commands.Cog, name="Admin"):
             )
             return
 
-        image_buffer = await asyncio.to_thread(generate_card_image, card)
+        if card.card_type == "PREMIUM" and not allow_premium:
+            await interaction.followup.send(
+                f"❌ **{card.name}** is a **PREMIUM** card. To spawn it, you must explicitly set `allow_premium: True`.",
+                ephemeral=True
+            )
+            return
+
+        image_buffer = await asyncio.to_thread(generate_card_image, card, refractor if refractor != "NONE" else "NONE")
         file = discord.File(fp=image_buffer, filename=f"{card.name}.png")
 
         embed = discord.Embed(
@@ -252,7 +292,8 @@ class AdminCog(commands.Cog, name="Admin"):
             text=f"Rarity: {card.rarity} | Position: {card.position} | OVR: {card.ovr}"
         )
 
-        view = CatchView(card)
+        view = CatchView(card, force_refractor=(refractor if refractor != "NONE" else None))
+        ref_label = f" [{refractor} Refractor]" if refractor != "NONE" else ""
         await interaction.followup.send(
             f"Spawning **{card.display_name}** ({card.ovr} OVR, {card.rarity})…",
             ephemeral=True,
@@ -260,14 +301,128 @@ class AdminCog(commands.Cog, name="Admin"):
         message = await interaction.channel.send(file=file, embed=embed, view=view)
         view.message = message
 
+    async def manager_name_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        from core.models import Manager
+        @sync_to_async
+        def get_managers():
+            qs = Manager.objects.all()
+            if current:
+                qs = qs.filter(name__icontains=current)
+            return list(qs[:25])
+        managers = await get_managers()
+        return [app_commands.Choice(name=m.name, value=m.name) for m in managers]
+
+    async def logo_name_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        from core.models import Logo
+        @sync_to_async
+        def get_logos():
+            qs = Logo.objects.all()
+            if current:
+                qs = qs.filter(name__icontains=current)
+            return list(qs[:25])
+        logos = await get_logos()
+        return [app_commands.Choice(name=l.name, value=l.name) for l in logos]
+
+    @spawn_group.command(name="manager", description="Spawn a catchable Manager in this channel")
+    @app_commands.describe(manager_name="Manager name to spawn (or leave empty for random)")
+    @app_commands.autocomplete(manager_name=manager_name_autocomplete)
+    async def spawn_manager(
+        self, interaction: discord.Interaction, manager_name: str | None = None
+    ):
+        if not await self.check_admin(interaction):
+            return
+
+        from core.models import Manager
+        if manager_name:
+            manager = await Manager.objects.filter(name__icontains=manager_name).afirst()
+            if not manager:
+                await interaction.response.send_message(
+                    f"❌ Manager '{manager_name}' not found.", ephemeral=True
+                )
+                return
+        else:
+            manager = await sync_to_async(lambda: Manager.objects.order_by("?").first())()
+            if not manager:
+                await interaction.response.send_message(
+                    "❌ No Managers exist in the database yet. Add managers via the Django admin panel.",
+                    ephemeral=True
+                )
+                return
+
+        spawning_cog = self.bot.get_cog("Spawning")
+        if not spawning_cog:
+            await interaction.response.send_message("❌ Spawning system unavailable.", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"Spawning manager **{manager.name}**…", ephemeral=True
+        )
+        await spawning_cog._spawn_manager(interaction.channel, manager=manager)
+
+    @spawn_group.command(name="logo", description="Spawn a catchable Club Crest / Logo in this channel")
+    @app_commands.describe(logo_name="Logo/club name to spawn (or leave empty for random)")
+    @app_commands.autocomplete(logo_name=logo_name_autocomplete)
+    async def spawn_logo(
+        self, interaction: discord.Interaction, logo_name: str | None = None
+    ):
+        if not await self.check_admin(interaction):
+            return
+
+        from core.models import Logo
+        if logo_name:
+            logo = await Logo.objects.filter(name__icontains=logo_name).afirst()
+            if not logo:
+                await interaction.response.send_message(
+                    f"❌ Logo '{logo_name}' not found.", ephemeral=True
+                )
+                return
+        else:
+            logo = await sync_to_async(lambda: Logo.objects.order_by("?").first())()
+            if not logo:
+                await interaction.response.send_message(
+                    "❌ No Logos exist in the database yet. Add logos via the Django admin panel.",
+                    ephemeral=True
+                )
+                return
+
+        spawning_cog = self.bot.get_cog("Spawning")
+        if not spawning_cog:
+            await interaction.response.send_message("❌ Spawning system unavailable.", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"Spawning logo **{logo.name}**…", ephemeral=True
+        )
+        await spawning_cog._spawn_logo(interaction.channel, logo=logo)
+
     # ══════════════════════════════════════════════════════════
     #  /admin give — replaces legacy /give + /give_full
     # ══════════════════════════════════════════════════════════
 
     @admin_group.command(name="give", description="Give a specific card to a user")
     @app_commands.autocomplete(player_search=template_autocomplete)
+    @app_commands.describe(
+        user="User to give the card to",
+        player_search="Card name to give",
+        refractor="Refractor edition to grant (optional)",
+    )
+    @app_commands.choices(refractor=[
+        app_commands.Choice(name="Standard (No Refractor)", value="NONE"),
+        app_commands.Choice(name="Red Edge Refractor (1/50)", value="RED"),
+        app_commands.Choice(name="Rainbow Edge Refractor (1/100)", value="RAINBOW"),
+        app_commands.Choice(name="Black Edge Refractor (1/250)", value="BLACK"),
+        app_commands.Choice(name="Gold Edge Refractor (1/800)", value="GOLD"),
+    ])
     async def give(
-        self, interaction: discord.Interaction, user: discord.Member, player_search: str
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        player_search: str,
+        refractor: str = "NONE",
     ):
         if not await self.check_admin(interaction):
             return
@@ -292,12 +447,13 @@ class AdminCog(commands.Cog, name="Admin"):
             )
             return
 
-        await UserCard.objects.acreate(owner=db_user, template=card)
+        await UserCard.objects.acreate(owner=db_user, template=card, refractor=refractor)
         db_user.cards_collected += 1
         await db_user.asave()
 
+        ref_txt = f" ({refractor} Refractor)" if refractor != "NONE" else ""
         await interaction.response.send_message(
-            f"Gave **{card.display_name}** ({card.rarity}) to {user.mention}!", ephemeral=True
+            f"Gave **{card.display_name}** ({card.rarity}){ref_txt} to {user.mention}!", ephemeral=True
         )
 
     @admin_group.command(

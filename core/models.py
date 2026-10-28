@@ -49,6 +49,8 @@ class DiscordUser(TypedModel):
     last_pack_event = models.DateTimeField(null=True, blank=True)
     last_pack_premium = models.DateTimeField(null=True, blank=True)
     last_pack_booster = models.DateTimeField(null=True, blank=True)
+    has_completed_tutorial = models.BooleanField(default=False)
+    last_card_drop = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.username} ({self.discord_id})"
@@ -167,6 +169,22 @@ class UserCard(TypedModel):
         help_text="The user who last traded this card to the current owner"
     )
     caught_at = models.DateTimeField(auto_now_add=True)
+    UPGRADE_TIERS = [
+        ("NONE", "Standard"),
+        ("SILVER", "Silver (+5%)"),
+        ("GOLD", "Gold (+10%)"),
+        ("DIAMOND", "Diamond (+25%)"),
+    ]
+    upgrade_tier = models.CharField(max_length=10, choices=UPGRADE_TIERS, default="NONE")
+
+    REFRACTOR_CHOICES = [
+        ("NONE", "None"),
+        ("RED", "Red Edge (1/50)"),
+        ("RAINBOW", "Rainbow Edge (1/100)"),
+        ("BLACK", "Black Edge (1/250)"),
+        ("GOLD", "Gold Edge (1/800)"),
+    ]
+    refractor = models.CharField(max_length=10, choices=REFRACTOR_CHOICES, default="NONE")
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
@@ -200,12 +218,38 @@ class FavouriteCard(TypedModel):
 
 class Logo(TypedModel):
     RARITIES = [("RARE", "Rare"), ("EPIC", "Epic"), ("LEGENDARY", "Legendary")]
+    BOOST_CHOICES = [
+        ("FLAT", "Flat Stat Boost"),
+        ("ATTACK", "Attack Boost"),
+        ("DEFENCE", "Defence Boost"),
+        ("BALANCED", "Balanced (Attack & Defence)"),
+        ("COUNTER", "Counter Attack"),
+    ]
     name = models.CharField(max_length=100)
-    rarity = models.CharField(max_length=10, choices=RARITIES)
-    bonus = models.IntegerField(default=1)  # +1, +2, +3
+    club = models.CharField(max_length=100, blank=True, null=True)
+    rarity = models.CharField(max_length=20, default="Rare")
+    bonus = models.IntegerField(default=1)  # For backwards compatibility with duel matches
+    boost_type = models.CharField(max_length=20, choices=BOOST_CHOICES, default="FLAT")
+    boost_val = models.IntegerField(default=2, help_text="Percentage or flat bonus")
+    preferred_tactic = models.CharField(max_length=20, default="ALL", help_text="Tactic that activates logo boost or ALL")
+    image = models.ImageField(upload_to="logos/", blank=True, null=True)
 
     def __str__(self):
-        return f"{self.name} ({self.rarity} +{self.bonus})"
+        return f"{self.name} ({self.rarity})"
+
+
+class UserOwnedLogo(TypedModel):
+    user = models.ForeignKey(
+        DiscordUser, on_delete=models.CASCADE, related_name="owned_logos"
+    )
+    logo = models.ForeignKey(Logo, on_delete=models.CASCADE)
+    acquired_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "logo")
+
+    def __str__(self):
+        return f"{self.user.username}'s Logo: {self.logo.name}"
 
 
 class UserLogo(TypedModel):
@@ -213,6 +257,9 @@ class UserLogo(TypedModel):
         DiscordUser, on_delete=models.CASCADE, related_name="equipped_logo"
     )
     logo = models.ForeignKey(Logo, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return f"{self.owner.username}'s Equipped Logo: {self.logo.name}"
 
 
 class Lineup(TypedModel):
@@ -746,6 +793,29 @@ class UserDailyObjective(TypedModel):
         return f"{self.user.username} - {self.template.description} - {self.date}"
 
 
+class WeeklyObjectiveTemplate(TypedModel):
+    objective_type = models.CharField(max_length=20, choices=DailyObjectiveTemplate.OBJECTIVE_TYPES)
+    target_amount = models.IntegerField(default=5)
+    description = models.CharField(max_length=200, help_text="e.g. Win 10 matches this week")
+
+    def __str__(self):
+        return f"{self.description} ({self.objective_type}: {self.target_amount})"
+
+
+class UserWeeklyObjective(TypedModel):
+    user = models.ForeignKey(DiscordUser, on_delete=models.CASCADE, related_name="weekly_objectives")
+    template = models.ForeignKey(WeeklyObjectiveTemplate, on_delete=models.CASCADE)
+    week_start = models.DateField(help_text="Monday of the active week")
+    progress = models.IntegerField(default=0)
+    is_claimed = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ("user", "template", "week_start")
+
+    def __str__(self):
+        return f"{self.user.username} - {self.template.description} - Week {self.week_start}"
+
+
 class SimSeason(TypedModel):
     name = models.CharField(max_length=100)
     start_date = models.DateTimeField(auto_now_add=True)
@@ -786,23 +856,73 @@ class TradeObjectiveLog(TypedModel):
 class Manager(TypedModel):
     name = models.CharField(max_length=100)
     nationality = models.CharField(max_length=100, blank=True, null=True)
-    preferred_formation = models.CharField(max_length=20, default="433", help_text="Preferred formation e.g. 433")
-    
+    rarity = models.CharField(max_length=20, default="Legendary")
+    image = models.ImageField(upload_to="managers/", blank=True, null=True)
+
+    preferred_formation = models.CharField(
+        max_length=20, default="433", help_text="Preferred formation e.g. 433, 442, or ALL"
+    )
     BOOST_CHOICES = [
-        ("ATTACKING", "Attacking"),
-        ("DEFENCE", "Defence"),
-        ("COUNTER_ATTACKING", "Counter Attacking")
+        ("ATTACKING", "Attacking Boost"),
+        ("DEFENCE", "Defence Boost"),
+        ("BALANCED", "Balanced (Attack & Defence)"),
+        ("COUNTER_ATTACKING", "Counter Attacking Boost"),
+        ("NONE", "No Boost"),
     ]
-    boost_type = models.CharField(max_length=20, choices=BOOST_CHOICES, default="ATTACKING")
-    
+    boost_type = models.CharField(
+        max_length=20, choices=BOOST_CHOICES, default="ATTACKING",
+        help_text="Legacy/Default boost type"
+    )
+    formation_boost_type = models.CharField(
+        max_length=20, choices=BOOST_CHOICES, default="ATTACKING",
+        help_text="Boost applied when formation matches"
+    )
+    formation_boost_pct = models.IntegerField(
+        default=5, help_text="Percentage boost when formation matches (e.g. 5 for 5%)"
+    )
+
+    TACTIC_CHOICES = [
+        ("ALL", "Any Tactic"),
+        ("balanced", "Balanced"),
+        ("attacking", "Attacking"),
+        ("defensive", "Defensive"),
+        ("possession", "Possession"),
+        ("counter", "Counter Attack"),
+    ]
+    preferred_tactic = models.CharField(
+        max_length=20, choices=TACTIC_CHOICES, default="ALL",
+        help_text="Tactic that triggers tactic boost, or ALL"
+    )
+    tactic_boost_type = models.CharField(
+        max_length=20, choices=BOOST_CHOICES, default="NONE",
+        help_text="Boost applied when team tactic matches"
+    )
+    tactic_boost_pct = models.IntegerField(
+        default=0, help_text="Percentage boost when tactic matches"
+    )
+
     def __str__(self):
         return f"{self.name} ({self.preferred_formation})"
+
+
+class UserOwnedManager(TypedModel):
+    user = models.ForeignKey(
+        DiscordUser, on_delete=models.CASCADE, related_name="owned_managers"
+    )
+    manager = models.ForeignKey(Manager, on_delete=models.CASCADE)
+    acquired_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "manager")
+
+    def __str__(self):
+        return f"{self.user.username}'s Manager: {self.manager.name}"
 
 
 class UserManager(TypedModel):
     owner = models.OneToOneField(DiscordUser, on_delete=models.CASCADE, related_name="equipped_manager")
     manager = models.ForeignKey(Manager, on_delete=models.CASCADE)
-    
+
     def __str__(self):
-        return f"{self.owner.username}'s Manager: {self.manager.name}"
+        return f"{self.owner.username}'s Equipped Manager: {self.manager.name}"
 

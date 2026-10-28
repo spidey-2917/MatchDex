@@ -33,6 +33,10 @@ from .models import (
     TradeObjectiveLog,
     Manager,
     UserManager,
+    UserOwnedManager,
+    UserOwnedLogo,
+    WeeklyObjectiveTemplate,
+    UserWeeklyObjective,
 )
 
 
@@ -247,9 +251,9 @@ class CardTemplateAdmin(admin.ModelAdmin):
 
 @admin.register(UserCard)
 class UserCardAdmin(admin.ModelAdmin):
-    list_display: Sequence[str] = ("owner", "template", "caught_at")
-    list_filter: Sequence[str] = ("caught_at",)
-    search_fields: Sequence[str] = ("owner__username", "template__name")
+    list_display: Sequence[str] = ("owner", "template", "upgrade_tier", "refractor", "caught_at")
+    list_filter: Sequence[str] = ("upgrade_tier", "refractor", "caught_at")
+    search_fields: Sequence[str] = ("owner__username", "template__name", "card_id")
 
 
 @admin.register(FavouriteCard)
@@ -260,12 +264,21 @@ class FavouriteCardAdmin(admin.ModelAdmin):
 
 @admin.register(Logo)
 class LogoAdmin(admin.ModelAdmin):
-    list_display: Sequence[str] = ("name", "rarity", "bonus")
+    list_display: Sequence[str] = ("name", "club", "rarity", "boost_type", "boost_val", "preferred_tactic")
+    list_filter: Sequence[str] = ("rarity", "boost_type", "preferred_tactic")
+    search_fields: Sequence[str] = ("name", "club")
+
+
+@admin.register(UserOwnedLogo)
+class UserOwnedLogoAdmin(admin.ModelAdmin):
+    list_display: Sequence[str] = ("user", "logo", "acquired_at")
+    search_fields: Sequence[str] = ("user__username", "logo__name")
 
 
 @admin.register(UserLogo)
 class UserLogoAdmin(admin.ModelAdmin):
     list_display: Sequence[str] = ("owner", "logo")
+    search_fields: Sequence[str] = ("owner__username", "logo__name")
 
 
 @admin.register(Lineup)
@@ -398,6 +411,19 @@ class UserDailyObjectiveAdmin(admin.ModelAdmin):
     search_fields: Sequence[str] = ("user__username",)
 
 
+@admin.register(WeeklyObjectiveTemplate)
+class WeeklyObjectiveTemplateAdmin(admin.ModelAdmin):
+    list_display: Sequence[str] = ("description", "objective_type", "target_amount")
+    list_filter: Sequence[str] = ("objective_type",)
+
+
+@admin.register(UserWeeklyObjective)
+class UserWeeklyObjectiveAdmin(admin.ModelAdmin):
+    list_display: Sequence[str] = ("user", "template", "week_start", "progress", "is_claimed")
+    list_filter: Sequence[str] = ("week_start", "is_claimed", "template__objective_type")
+    search_fields: Sequence[str] = ("user__username",)
+
+
 @admin.register(SimSeason)
 class SimSeasonAdmin(admin.ModelAdmin):
     list_display = ("name", "start_date", "end_date", "is_active")
@@ -420,9 +446,19 @@ class TradeObjectiveLogAdmin(admin.ModelAdmin):
 
 @admin.register(Manager)
 class ManagerAdmin(admin.ModelAdmin):
-    list_display = ("name", "nationality", "preferred_formation", "boost_type")
-    list_filter = ("preferred_formation", "boost_type")
+    list_display = (
+        "name", "nationality", "rarity",
+        "preferred_formation", "formation_boost_type", "formation_boost_pct",
+        "preferred_tactic", "tactic_boost_type", "tactic_boost_pct",
+    )
+    list_filter = ("preferred_formation", "preferred_tactic", "formation_boost_type", "rarity")
     search_fields = ("name", "nationality")
+
+
+@admin.register(UserOwnedManager)
+class UserOwnedManagerAdmin(admin.ModelAdmin):
+    list_display = ("user", "manager", "acquired_at")
+    search_fields = ("user__username", "manager__name")
 
 
 @admin.register(UserManager)

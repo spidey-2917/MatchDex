@@ -238,13 +238,13 @@ def pick_random_card(category, card_type_filter=None, event_name_filter=None, mi
                 qs = fallback_qs
             else:
                 # Second fallback: ignore card type filter but keep extra filters
-                last_resort_qs = CardTemplate.objects.all()
+                last_resort_qs = CardTemplate.objects.exclude(card_type="PREMIUM")
                 last_resort_qs = _apply_extra_filters(last_resort_qs)
                 if last_resort_qs.exists():
                     qs = last_resort_qs
                 else:
-                    # Absolute last resort: any card template at all!
-                    qs = CardTemplate.objects.all()
+                    # Absolute last resort: non-premium cards
+                    qs = CardTemplate.objects.exclude(card_type="PREMIUM")
                     
         if not qs:
             return None
@@ -339,72 +339,124 @@ def get_random_card_by_rarity(rarity):
     return cards.order_by("?").first()
 
 
-def generate_card_image(card_template):
+def roll_refractor() -> str:
+    """Roll for exclusive card art refractor variations."""
+    r = random.randint(1, 800)
+    if r == 1:
+        return "GOLD"       # 1/800 Gold Edge
+    if r % 250 == 0:
+        return "BLACK"      # 1/250 Black Edge
+    if r % 100 == 0:
+        return "RAINBOW"    # 1/100 Rainbow Edge
+    if r % 50 == 0:
+        return "RED"        # 1/50 Red Edge
+    return "NONE"
+
+
+def apply_refractor_border(img: Image.Image, refractor: str) -> Image.Image:
+    """Applies a metallic/gradient border on the card for Refractor variations."""
+    if not refractor or refractor == "NONE":
+        return img
+    img = img.convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    w, h = img.size
+    border_width = max(6, int(min(w, h) * 0.03))
+
+    if refractor == "RED":
+        for i in range(border_width):
+            col = (220, 20 + i * 4, 40, 255)
+            draw.rectangle([i, i, w - 1 - i, h - 1 - i], outline=col)
+    elif refractor == "GOLD":
+        for i in range(border_width):
+            col = (255, 215 - i * 3, 0, 255)
+            draw.rectangle([i, i, w - 1 - i, h - 1 - i], outline=col)
+    elif refractor == "BLACK":
+        for i in range(border_width):
+            val = 20 if i < border_width - 2 else 140
+            draw.rectangle([i, i, w - 1 - i, h - 1 - i], outline=(val, val, val, 255))
+    elif refractor == "RAINBOW":
+        colors = [
+            (255, 0, 0), (255, 127, 0), (255, 255, 0),
+            (0, 255, 0), (0, 150, 255), (120, 0, 255)
+        ]
+        step = max(1, border_width // len(colors))
+        for i in range(border_width):
+            c_idx = min(len(colors) - 1, i // step)
+            col = colors[c_idx] + (255,)
+            draw.rectangle([i, i, w - 1 - i, h - 1 - i], outline=col)
+
+    return img.convert("RGB")
+
+
+def generate_card_image(card_input, refractor: str = "NONE"):
+    # Support both CardTemplate and UserCard
+    card_template = getattr(card_input, "template", card_input)
+    card_refractor = getattr(card_input, "refractor", refractor) or refractor
+
     # If a custom image was uploaded in the admin panel, use it directly
+    img = None
     if card_template.image_base and card_template.image_base.name:
         try:
             image_path = os.path.join(
                 django_settings.MEDIA_ROOT, card_template.image_base.name
             )
-            img = Image.open(image_path)
-            img = img.convert("RGB")
-
-            # Resize large images to prevent 413 Payload Too Large errors
+            img = Image.open(image_path).convert("RGB")
             img.thumbnail((800, 1200), Image.Resampling.LANCZOS)
-
-            buffer = io.BytesIO()
-            img.save(buffer, format="PNG", optimize=True)
-            buffer.seek(0)
-            return buffer
         except (OSError, IOError, FileNotFoundError):
-            pass  # Fall through to generated card
+            pass
 
-    # Fallback: generated text-based card
-    width, height = 400, 600
-    rarity_colors = {
-        "Common": (169, 169, 169),
-        "Uncommon": (34, 139, 34),
-        "Rare": (30, 144, 255),
-        "Epic": (138, 43, 226),
-        "Legendary": (255, 215, 0),
-        "Premium": (220, 20, 60),
-    }
+    if img is None:
+        # Fallback: generated text-based card
+        width, height = 400, 600
+        rarity_colors = {
+            "Common": (169, 169, 169),
+            "Uncommon": (34, 139, 34),
+            "Rare": (30, 144, 255),
+            "Epic": (138, 43, 226),
+            "Legendary": (255, 215, 0),
+            "Premium": (220, 20, 60),
+        }
 
-    base_rarity = card_template.rarity.split()[0] if card_template.rarity else ""
-    color = rarity_colors.get(base_rarity, (255, 255, 255))
-    img = Image.new("RGB", (width, height), color=color)
-    draw = ImageDraw.Draw(img)
+        base_rarity = card_template.rarity.split()[0] if card_template.rarity else ""
+        color = rarity_colors.get(base_rarity, (255, 255, 255))
+        img = Image.new("RGB", (width, height), color=color)
+        draw = ImageDraw.Draw(img)
 
-    try:
-        font_large = ImageFont.truetype("arial.ttf", 40)
-        font_small = ImageFont.truetype("arial.ttf", 20)
-    except (OSError, IOError):
-        font_large = ImageFont.load_default()
-        font_small = ImageFont.load_default()
+        try:
+            font_large = ImageFont.truetype("arial.ttf", 40)
+            font_small = ImageFont.truetype("arial.ttf", 20)
+        except (OSError, IOError):
+            font_large = ImageFont.load_default()
+            font_small = ImageFont.load_default()
 
-    draw.text((20, 20), card_template.name, fill=(0, 0, 0), font=font_large)
-    draw.text((20, 80), f"OVR: {card_template.ovr}", fill=(0, 0, 0), font=font_large)
-    draw.text(
-        (20, 140), f"POS: {card_template.position}", fill=(0, 0, 0), font=font_small
-    )
-    draw.text(
-        (20, 170),
-        f"ATT: {card_template.attack_stat}  DEF: {card_template.defence_stat}",
-        fill=(0, 0, 0),
-        font=font_small,
-    )
-    draw.text((20, 200), f"CLUB: {card_template.club}", fill=(0, 0, 0), font=font_small)
-    draw.text((20, 550), card_template.rarity.upper(), fill=(0, 0, 0), font=font_large)
+        draw.text((20, 20), card_template.name, fill=(0, 0, 0), font=font_large)
+        draw.text((20, 80), f"OVR: {card_template.ovr}", fill=(0, 0, 0), font=font_large)
+        draw.text(
+            (20, 140), f"POS: {card_template.position}", fill=(0, 0, 0), font=font_small
+        )
+        draw.text(
+            (20, 170),
+            f"ATT: {card_template.attack_stat}  DEF: {card_template.defence_stat}",
+            fill=(0, 0, 0),
+            font=font_small,
+        )
+        draw.text((20, 200), f"CLUB: {card_template.club}", fill=(0, 0, 0), font=font_small)
+        draw.text((20, 550), card_template.rarity.upper(), fill=(0, 0, 0), font=font_large)
+
+    # Apply refractor border if applicable
+    if card_refractor and card_refractor != "NONE":
+        img = apply_refractor_border(img, card_refractor)
 
     buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
+    img.save(buffer, format="PNG", optimize=True)
     buffer.seek(0)
     return buffer
 
 
 async def catch_card(user_id, card_template):
     user, created = await DiscordUser.objects.aget_or_create(discord_id=user_id)
-    user_card = await UserCard.objects.acreate(owner=user, template=card_template)
+    ref = roll_refractor()
+    user_card = await UserCard.objects.acreate(owner=user, template=card_template, refractor=ref)
     user.cards_collected += 1
     await user.asave()
     return user_card
