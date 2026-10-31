@@ -453,6 +453,72 @@ def generate_card_image(card_input, refractor: str = "NONE"):
     return buffer
 
 
+def generate_manager_image(manager):
+    """Generates or loads the card design image for a manager."""
+    img = None
+    if manager.image and manager.image.name:
+        try:
+            image_path = os.path.join(django_settings.MEDIA_ROOT, manager.image.name)
+            img = Image.open(image_path).convert("RGB")
+            img.thumbnail((800, 1200), Image.Resampling.LANCZOS)
+        except (OSError, IOError, FileNotFoundError):
+            pass
+
+    if img is None:
+        width, height = 400, 600
+        rarity_colors = {
+            "Rare": (30, 144, 255),
+            "Epic": (138, 43, 226),
+            "Legendary": (255, 215, 0),
+            "World-Class": (220, 20, 60),
+        }
+        color = rarity_colors.get(manager.rarity, (70, 130, 180))
+        img = Image.new("RGB", (width, height), color=(20, 24, 30))
+        draw = ImageDraw.Draw(img)
+
+        # Draw decorative card frame
+        border_width = 8
+        for i in range(border_width):
+            draw.rectangle([i, i, width - 1 - i, height - 1 - i], outline=color)
+
+        try:
+            font_title = ImageFont.truetype("arial.ttf", 34)
+            font_sub = ImageFont.truetype("arial.ttf", 22)
+            font_body = ImageFont.truetype("arial.ttf", 18)
+        except (OSError, IOError):
+            font_title = ImageFont.load_default()
+            font_sub = ImageFont.load_default()
+            font_body = ImageFont.load_default()
+
+        # Title
+        draw.text((25, 30), "👔 MANAGER", fill=color, font=font_sub)
+        draw.text((25, 65), manager.name, fill=(255, 255, 255), font=font_title)
+        draw.text((25, 120), f"Rarity: {manager.rarity.upper()}", fill=color, font=font_sub)
+        draw.text((25, 155), f"Nationality: {manager.nationality or 'Unknown'}", fill=(200, 200, 200), font=font_body)
+
+        # Inner tactician badge card
+        draw.rectangle([25, 210, width - 25, 520], fill=(30, 36, 45), outline=color)
+        draw.text((45, 230), "TACTICAL SPECIFICATIONS", fill=color, font=font_sub)
+        draw.text((45, 280), f"Formation: {manager.preferred_formation.upper()}", fill=(255, 255, 255), font=font_body)
+        draw.text((45, 315), f"Formation Synergy: +{manager.formation_boost_pct}%", fill=(100, 255, 100), font=font_body)
+        draw.text((45, 345), f"Boost Type: {manager.formation_boost_type}", fill=(200, 200, 200), font=font_body)
+
+        tactic_name = getattr(manager, "get_preferred_tactic_display", lambda: manager.preferred_tactic)()
+        draw.text((45, 400), f"Tactic: {tactic_name}", fill=(255, 255, 255), font=font_body)
+        if manager.tactic_boost_pct > 0 and manager.tactic_boost_type != "NONE":
+            draw.text((45, 435), f"Tactic Synergy: +{manager.tactic_boost_pct}%", fill=(100, 255, 100), font=font_body)
+            draw.text((45, 465), f"Boost Type: {manager.tactic_boost_type}", fill=(200, 200, 200), font=font_body)
+        else:
+            draw.text((45, 435), "Tactic Boost: None", fill=(150, 150, 150), font=font_body)
+
+        draw.text((25, 545), "MATCHDEX TACTICAL LEADERSHIP", fill=(120, 130, 140), font=font_body)
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG", optimize=True)
+    buffer.seek(0)
+    return buffer
+
+
 async def catch_card(user_id, card_template):
     user, created = await DiscordUser.objects.aget_or_create(discord_id=user_id)
     ref = roll_refractor()

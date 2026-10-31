@@ -793,10 +793,38 @@ class UserDailyObjective(TypedModel):
         return f"{self.user.username} - {self.template.description} - {self.date}"
 
 
+class WeeklyObjectiveRewardPoolItem(TypedModel):
+    REWARD_TYPES = [
+        ("POINTS", "Points"),
+        ("PACK", "Pack"),
+        ("CARD", "Specific Card"),
+    ]
+    name = models.CharField(max_length=100)
+    reward_type = models.CharField(max_length=20, choices=REWARD_TYPES)
+    amount = models.IntegerField(default=1000, help_text="Amount of points or packs")
+    pack = models.ForeignKey("Pack", on_delete=models.SET_NULL, null=True, blank=True)
+    card = models.ForeignKey("CardTemplate", on_delete=models.SET_NULL, null=True, blank=True)
+    weight = models.IntegerField(default=10, help_text="Higher weight = more likely to drop")
+
+    def __str__(self):
+        return f"[Weekly] {self.name} (Weight: {self.weight})"
+
+
 class WeeklyObjectiveTemplate(TypedModel):
     objective_type = models.CharField(max_length=20, choices=DailyObjectiveTemplate.OBJECTIVE_TYPES)
     target_amount = models.IntegerField(default=5)
     description = models.CharField(max_length=200, help_text="e.g. Win 10 matches this week")
+
+    REWARD_CHOICES = [
+        ("DEFAULT_POOL", "Draw from Weekly Reward Pool"),
+        ("POINTS", "Specific Points"),
+        ("PACK", "Specific Pack"),
+        ("CARD", "Specific Card"),
+    ]
+    reward_type = models.CharField(max_length=20, choices=REWARD_CHOICES, default="DEFAULT_POOL")
+    reward_amount = models.IntegerField(default=500, help_text="Points amount or number of packs if specified")
+    reward_pack = models.ForeignKey("Pack", on_delete=models.SET_NULL, null=True, blank=True, help_text="Specific pack reward (optional)")
+    reward_card = models.ForeignKey("CardTemplate", on_delete=models.SET_NULL, null=True, blank=True, help_text="Specific card reward (optional)")
 
     def __str__(self):
         return f"{self.description} ({self.objective_type}: {self.target_amount})"
@@ -854,9 +882,15 @@ class TradeObjectiveLog(TypedModel):
 
 
 class Manager(TypedModel):
+    RARITY_CHOICES = [
+        ("Rare", "Rare"),
+        ("Epic", "Epic"),
+        ("Legendary", "Legendary"),
+        ("World-Class", "World-Class"),
+    ]
     name = models.CharField(max_length=100)
     nationality = models.CharField(max_length=100, blank=True, null=True)
-    rarity = models.CharField(max_length=20, default="Legendary")
+    rarity = models.CharField(max_length=20, choices=RARITY_CHOICES, default="Legendary")
     image = models.ImageField(upload_to="managers/", blank=True, null=True)
 
     preferred_formation = models.CharField(

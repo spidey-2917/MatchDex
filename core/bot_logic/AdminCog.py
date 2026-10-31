@@ -328,10 +328,22 @@ class AdminCog(commands.Cog, name="Admin"):
         return [app_commands.Choice(name=l.name, value=l.name) for l in logos]
 
     @spawn_group.command(name="manager", description="Spawn a catchable Manager in this channel")
-    @app_commands.describe(manager_name="Manager name to spawn (or leave empty for random)")
+    @app_commands.describe(
+        manager_name="Manager name to spawn (or leave empty for random)",
+        rarity="Filter random spawn by manager rarity (optional)"
+    )
+    @app_commands.choices(rarity=[
+        app_commands.Choice(name="Rare", value="Rare"),
+        app_commands.Choice(name="Epic", value="Epic"),
+        app_commands.Choice(name="Legendary", value="Legendary"),
+        app_commands.Choice(name="World-Class", value="World-Class"),
+    ])
     @app_commands.autocomplete(manager_name=manager_name_autocomplete)
     async def spawn_manager(
-        self, interaction: discord.Interaction, manager_name: str | None = None
+        self,
+        interaction: discord.Interaction,
+        manager_name: str | None = None,
+        rarity: str | None = None,
     ):
         if not await self.check_admin(interaction):
             return
@@ -345,10 +357,17 @@ class AdminCog(commands.Cog, name="Admin"):
                 )
                 return
         else:
-            manager = await sync_to_async(lambda: Manager.objects.order_by("?").first())()
+            @sync_to_async
+            def get_mgr():
+                qs = Manager.objects.all()
+                if rarity:
+                    qs = qs.filter(rarity__iexact=rarity)
+                return qs.order_by("?").first()
+            manager = await get_mgr()
             if not manager:
+                filter_str = f" with rarity '{rarity}'" if rarity else ""
                 await interaction.response.send_message(
-                    "❌ No Managers exist in the database yet. Add managers via the Django admin panel.",
+                    f"❌ No Managers exist{filter_str} in the database yet. Add managers via the Django admin panel.",
                     ephemeral=True
                 )
                 return
@@ -359,7 +378,7 @@ class AdminCog(commands.Cog, name="Admin"):
             return
 
         await interaction.response.send_message(
-            f"Spawning manager **{manager.name}**…", ephemeral=True
+            f"Spawning manager **{manager.name}** ({manager.rarity})…", ephemeral=True
         )
         await spawning_cog._spawn_manager(interaction.channel, manager=manager)
 

@@ -477,10 +477,16 @@ class DroppedCatchModal(discord.ui.Modal, title="Catch Dropped Card"):
 
             await update_objective_progress(catcher, "claim_card")
 
+            dropper_name = (
+                getattr(self.view_instance, "dropper_name", None)
+                or getattr(self.view_instance.dropper, "username", None)
+                or f"User #{getattr(self.view_instance.dropper, 'discord_id', 'Unknown')}"
+            )
+
             ref_note = ""
             if updated_card.refractor and updated_card.refractor != "NONE":
                 ref_label = dict(UserCard.REFRACTOR_CHOICES).get(updated_card.refractor, updated_card.refractor)
-                ref_note = f"\n✨ Transferred with its rare **{ref_label}** refractor from {self.view_instance.dropper.username}! ✨"
+                ref_note = f"\n✨ Transferred with its rare **{ref_label}** refractor from {dropper_name}! ✨"
 
             tier_note = ""
             if updated_card.upgrade_tier and updated_card.upgrade_tier != "NONE":
@@ -488,7 +494,7 @@ class DroppedCatchModal(discord.ui.Modal, title="Catch Dropped Card"):
 
             await interaction.response.send_message(
                 f"🎉 {interaction.user.mention} caught **{updated_card.template.display_name}**{tier_note} "
-                f"(#{updated_card.card_id}, {updated_card.template.rarity}) dropped by **{self.view_instance.dropper.username}**!{ref_note}"
+                f"(#{updated_card.card_id}, {updated_card.template.rarity}) dropped by **{dropper_name}**!{ref_note}"
             )
             if interaction.message:
                 embed = interaction.message.embeds[0] if interaction.message.embeds else None
@@ -505,10 +511,11 @@ class DroppedCatchModal(discord.ui.Modal, title="Catch Dropped Card"):
 
 
 class DroppedCatchView(discord.ui.View):
-    def __init__(self, user_card, dropper, cog):
+    def __init__(self, user_card, dropper, cog, dropper_name=None):
         super().__init__(timeout=300)
         self.user_card = user_card
         self.dropper = dropper
+        self.dropper_name = dropper_name or getattr(dropper, "username", None) or str(getattr(dropper, "discord_id", "Unknown"))
         self.cog = cog
         self.caught = False
         self.message = None
@@ -655,15 +662,32 @@ class SpawningCog(commands.Cog, name="Spawning"):
 
         await self._spawn_random_entity(channel)
 
-    async def _spawn_manager(self, channel: discord.TextChannel, manager=None) -> bool:
-        """Spawn a catchable Manager. Returns True if spawned successfully."""
+    async def _spawn_manager(self, channel: discord.TextChannel, manager=None, rarity=None) -> bool:
+        """Spawn a catchable Manager with rarity weighting. Returns True if spawned successfully."""
         if not channel or not getattr(channel, "guild", None):
             return False
         if await self.bot.is_guild_blacklisted(channel.guild.id):
             return False
 
         if not manager:
-            manager = await sync_to_async(lambda: Manager.objects.order_by("?").first())()
+            @sync_to_async
+            def pick_manager():
+                qs = Manager.objects.all()
+                if not qs.exists():
+                    return None
+                if rarity:
+                    match_qs = qs.filter(rarity__iexact=rarity)
+                    if match_qs.exists():
+                        return match_qs.order_by("?").first()
+
+                # Weighted roll by manager rarity
+                available_rarities = list(qs.values_list("rarity", flat=True).distinct())
+                weights_map = {"Rare": 55, "Epic": 30, "Legendary": 12, "World-Class": 3}
+                weights = [weights_map.get(r, 10) for r in available_rarities]
+                chosen_rarity = random.choices(available_rarities, weights=weights, k=1)[0]
+                return qs.filter(rarity=chosen_rarity).order_by("?").first()
+
+            manager = await pick_manager()
         if not manager:
             return False
 
@@ -696,6 +720,15 @@ class SpawningCog(commands.Cog, name="Spawning"):
                     embed.set_thumbnail(url=f"attachment://manager_{manager.id}.png")
             except Exception as e:
                 log.warning(f"Failed to load manager image: {e}")
+
+        if not file:
+            try:
+                from core.utils import generate_manager_image
+                image_buffer = await asyncio.to_thread(generate_manager_image, manager)
+                file = discord.File(fp=image_buffer, filename=f"manager_{manager.id}.png")
+                embed.set_thumbnail(url=f"attachment://manager_{manager.id}.png")
+            except Exception:
+                pass
 
         view = SignManagerView(manager)
         try:
@@ -857,6 +890,9 @@ class SpawningCog(commands.Cog, name="Spawning"):
             discord_id=interaction.user.id,
             defaults={"username": interaction.user.name},
         )
+        if not user.username or user.username != interaction.user.name:
+            user.username = interaction.user.name
+            await user.asave(update_fields=["username"])
 
         now = timezone.now()
         if user.last_card_drop:
@@ -957,7 +993,8 @@ class SpawningCog(commands.Cog, name="Spawning"):
             text=f"Dropped by {interaction.user.name} | Rarity: {dropped_card.template.rarity} | Position: {dropped_card.template.position} | OVR: {dropped_card.template.ovr}"
         )
 
-        view = DroppedCatchView(dropped_card, user, self)
+        dropper_display = interaction.user.display_name or interaction.user.name
+        view = DroppedCatchView(dropped_card, user, self, dropper_name=dropper_display)
         msg = await interaction.followup.send(file=file, embed=embed, view=view)
         view.message = msg
 

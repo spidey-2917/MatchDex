@@ -10,6 +10,7 @@ from core.models import (
     WeeklyObjectiveTemplate,
     UserWeeklyObjective,
     ObjectiveRewardPoolItem,
+    WeeklyObjectiveRewardPoolItem,
     UserCard
 )
 
@@ -201,46 +202,105 @@ def claim_objective_reward(user, objective_id):
 def claim_weekly_objective_reward(user, objective_id):
     """
     Claims the reward for a completed weekly objective.
-    Grants premium tier rewards (higher points/packs or pool items).
+    Grants template-specific reward or weekly pool items.
     """
     try:
-        obj = UserWeeklyObjective.objects.get(id=objective_id, user=user)
+        obj = UserWeeklyObjective.objects.select_related('template', 'template__reward_pack', 'template__reward_card').get(id=objective_id, user=user)
     except UserWeeklyObjective.DoesNotExist:
         return None
 
     if obj.is_claimed or obj.progress < obj.template.target_amount:
         return None
 
-    pool_items = list(ObjectiveRewardPoolItem.objects.all())
-    if not pool_items:
-        # Default fallback reward if prize pool is empty
-        user.points += 500
+    template = obj.template
+    reward_text = ""
+
+    # 1. Check if template has a specific reward configured
+    if template.reward_type == "POINTS":
+        pts = template.reward_amount
+        user.points += pts
         user.save()
-        reward_text = "**500 Bonus Points**"
-    else:
-        weights = [item.weight for item in pool_items]
-        reward = random.choices(pool_items, weights=weights, k=1)[0]
-        if reward.reward_type == "POINTS":
-            pts = reward.amount * 2
-            user.points += pts
+        reward_text = f"**{pts} Points**"
+    elif template.reward_type == "PACK":
+        if template.reward_pack:
+            from core.models import UserPack
+            up, _ = UserPack.objects.get_or_create(user=user, pack=template.reward_pack)
+            count = max(template.reward_amount, 1)
+            up.stash_count += count
+            up.save()
+            reward_text = f"**{count}x {template.reward_pack.name} Pack**"
+        else:
+            user.points += 500
             user.save()
-            reward_text = f"**{pts} Points**"
-        elif reward.reward_type == "PACK":
-            if reward.pack:
-                from core.models import UserPack
-                up, _ = UserPack.objects.get_or_create(user=user, pack=reward.pack)
-                packs = max(reward.amount, 2)
-                up.stash_count += packs
-                up.save()
-                reward_text = f"**{packs}x {reward.pack.name} Pack**"
-            else:
-                user.points += 500
+            reward_text = "**500 Bonus Points**"
+    elif template.reward_type == "CARD":
+        if template.reward_card:
+            UserCard.objects.create(owner=user, template=template.reward_card)
+            reward_text = f"**{template.reward_card.name} ({template.reward_card.rarity})**"
+        else:
+            user.points += 500
+            user.save()
+            reward_text = "**500 Bonus Points**"
+    else:
+        # 2. Draw from Weekly Reward Pool
+        weekly_pool = list(WeeklyObjectiveRewardPoolItem.objects.select_related('pack', 'card').all())
+        if weekly_pool:
+            weights = [item.weight for item in weekly_pool]
+            reward = random.choices(weekly_pool, weights=weights, k=1)[0]
+            if reward.reward_type == "POINTS":
+                user.points += reward.amount
                 user.save()
-                reward_text = "**500 Bonus Points**"
-        elif reward.reward_type == "CARD":
-            if reward.card:
-                UserCard.objects.create(owner=user, template=reward.card)
-                reward_text = f"**{reward.card.name} ({reward.card.rarity})**"
+                reward_text = f"**{reward.amount} Points**"
+            elif reward.reward_type == "PACK":
+                if reward.pack:
+                    from core.models import UserPack
+                    up, _ = UserPack.objects.get_or_create(user=user, pack=reward.pack)
+                    up.stash_count += max(reward.amount, 1)
+                    up.save()
+                    reward_text = f"**{max(reward.amount, 1)}x {reward.pack.name} Pack**"
+                else:
+                    user.points += 500
+                    user.save()
+                    reward_text = "**500 Bonus Points**"
+            elif reward.reward_type == "CARD":
+                if reward.card:
+                    UserCard.objects.create(owner=user, template=reward.card)
+                    reward_text = f"**{reward.card.name} ({reward.card.rarity})**"
+                else:
+                    user.points += 500
+                    user.save()
+                    reward_text = "**500 Bonus Points**"
+        else:
+            # Fallback to standard pool with 2x bonus or default 500 points
+            pool_items = list(ObjectiveRewardPoolItem.objects.select_related('pack', 'card').all())
+            if pool_items:
+                weights = [item.weight for item in pool_items]
+                reward = random.choices(pool_items, weights=weights, k=1)[0]
+                if reward.reward_type == "POINTS":
+                    pts = reward.amount * 2
+                    user.points += pts
+                    user.save()
+                    reward_text = f"**{pts} Points**"
+                elif reward.reward_type == "PACK":
+                    if reward.pack:
+                        from core.models import UserPack
+                        up, _ = UserPack.objects.get_or_create(user=user, pack=reward.pack)
+                        packs = max(reward.amount, 2)
+                        up.stash_count += packs
+                        up.save()
+                        reward_text = f"**{packs}x {reward.pack.name} Pack**"
+                    else:
+                        user.points += 500
+                        user.save()
+                        reward_text = "**500 Bonus Points**"
+                elif reward.reward_type == "CARD":
+                    if reward.card:
+                        UserCard.objects.create(owner=user, template=reward.card)
+                        reward_text = f"**{reward.card.name} ({reward.card.rarity})**"
+                    else:
+                        user.points += 500
+                        user.save()
+                        reward_text = "**500 Bonus Points**"
             else:
                 user.points += 500
                 user.save()

@@ -37,6 +37,7 @@ from .models import (
     UserOwnedLogo,
     WeeklyObjectiveTemplate,
     UserWeeklyObjective,
+    WeeklyObjectiveRewardPoolItem,
 )
 
 
@@ -411,10 +412,18 @@ class UserDailyObjectiveAdmin(admin.ModelAdmin):
     search_fields: Sequence[str] = ("user__username",)
 
 
+@admin.register(WeeklyObjectiveRewardPoolItem)
+class WeeklyObjectiveRewardPoolItemAdmin(admin.ModelAdmin):
+    list_display: Sequence[str] = ("name", "reward_type", "amount", "pack", "card", "weight")
+    list_filter: Sequence[str] = ("reward_type",)
+    search_fields: Sequence[str] = ("name",)
+
+
 @admin.register(WeeklyObjectiveTemplate)
 class WeeklyObjectiveTemplateAdmin(admin.ModelAdmin):
-    list_display: Sequence[str] = ("description", "objective_type", "target_amount")
-    list_filter: Sequence[str] = ("objective_type",)
+    list_display: Sequence[str] = ("description", "objective_type", "target_amount", "reward_type", "reward_amount", "reward_pack", "reward_card")
+    list_filter: Sequence[str] = ("objective_type", "reward_type")
+    search_fields: Sequence[str] = ("description",)
 
 
 @admin.register(UserWeeklyObjective)

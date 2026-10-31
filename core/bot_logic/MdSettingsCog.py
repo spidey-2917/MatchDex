@@ -362,10 +362,30 @@ class MdSettingsCog(commands.Cog, name="Settings"):
             )
             return
 
-        image_buffer = await asyncio.to_thread(generate_card_image, template)
+        refractor = getattr(user_card, "refractor", "NONE") if user_card else "NONE"
+        image_buffer = await asyncio.to_thread(generate_card_image, user_card or template, refractor)
         file = discord.File(fp=image_buffer, filename=f"{template.name}.png")
 
+        tier_boost = 0
+        tier_str = ""
+        ref_str = ""
         if user_card:
+            tier = getattr(user_card, "upgrade_tier", "NONE")
+            if tier == "SILVER":
+                tier_boost = 5
+                tier_str = "\nUpgrade Tier: 🥈 Silver (+5% ATK & DEF)"
+            elif tier == "GOLD":
+                tier_boost = 10
+                tier_str = "\nUpgrade Tier: 🥇 Gold (+10% ATK & DEF)"
+            elif tier == "DIAMOND":
+                tier_boost = 25
+                tier_str = "\nUpgrade Tier: 💎 Diamond (+25% ATK & DEF)"
+
+            if refractor != "NONE":
+                ref_choices = dict(UserCard.REFRACTOR_CHOICES)
+                ref_label = ref_choices.get(refractor, refractor)
+                ref_str = f"\nRefractor Edition: ✨ **{ref_label}**"
+
             caught_str = f"Caught on {discord.utils.format_dt(user_card.caught_at, 'f')} ({discord.utils.format_dt(user_card.caught_at, 'R')})."
             
             # Build traded_by line
@@ -378,16 +398,26 @@ class MdSettingsCog(commands.Cog, name="Settings"):
                         trader_name = member.display_name
                 traded_by_str = f"\nTraded by: {trader_name}"
             
-            atk_str = f"ATK: {template.attack_stat}"
-            if template.attack_boost_pct > 0:
-                atk_str += f" (+{template.attack_boost_pct}%)"
-                
-            def_str = f"DEF: {template.defence_stat}"
-            if template.defence_boost_pct > 0:
-                def_str += f" (+{template.defence_boost_pct}%)"
+            total_atk_pct = template.attack_boost_pct + tier_boost
+            total_def_pct = template.defence_boost_pct + tier_boost
+
+            atk_val = template.attack_stat
+            if total_atk_pct > 0:
+                boosted_atk = int(atk_val * (1 + total_atk_pct / 100.0))
+                atk_str = f"ATK: {atk_val} (+{total_atk_pct}% -> **{boosted_atk}**)"
+            else:
+                atk_str = f"ATK: {atk_val}"
+
+            def_val = template.defence_stat
+            if total_def_pct > 0:
+                boosted_def = int(def_val * (1 + total_def_pct / 100.0))
+                def_str = f"DEF: {def_val} (+{total_def_pct}% -> **{boosted_def}**)"
+            else:
+                def_str = f"DEF: {def_val}"
                 
             content = (
-                f"ID: #{user_card.card_id}\n"
+                f"Player: **{template.display_name}** | #{user_card.card_id}\n"
+                f"Rarity: **{template.rarity}**{ref_str}{tier_str}\n"
                 f"{caught_str}{traded_by_str}\n\n"
                 f"{atk_str}\n"
                 f"{def_str}"
@@ -402,7 +432,8 @@ class MdSettingsCog(commands.Cog, name="Settings"):
                 def_str += f" (+{template.defence_boost_pct}%)"
                 
             content = (
-                f"Player: {template.display_name}\n\n"
+                f"Player: **{template.display_name}**\n"
+                f"Rarity: **{template.rarity}**\n\n"
                 f"{atk_str}\n"
                 f"{def_str}"
             )
@@ -470,6 +501,48 @@ class MdSettingsCog(commands.Cog, name="Settings"):
         # We'll initialize the view which will handle fetching and pagination
         view = SettingsCardListView(target_db, sort_by, self.bot, reverse, requester_id=interaction.user.id, event=event)
         await view.update_view(interaction)
+
+    @app_commands.command(
+        name="cards", description="Show a list of your cards with sorting, upgrade tiers, and refractors"
+    )
+    @app_commands.choices(
+        sort_by=[
+            app_commands.Choice(name="OVR (Highest)", value="ovr"),
+            app_commands.Choice(name="Rarity", value="rarity"),
+            app_commands.Choice(name="Card Type", value="type"),
+            app_commands.Choice(name="Catch Date (Newest)", value="date"),
+        ]
+    )
+    async def cards_cmd(
+        self,
+        interaction: discord.Interaction,
+        sort_by: str = "ovr",
+        reverse: bool = False,
+        user: str | None = None,
+        event: str | None = None,
+    ):
+        await self.list_cards(interaction, sort_by=sort_by, reverse=reverse, user=user, event=event)
+
+    @app_commands.command(
+        name="inventory", description="Show your card inventory with sorting, upgrade tiers, and refractors"
+    )
+    @app_commands.choices(
+        sort_by=[
+            app_commands.Choice(name="OVR (Highest)", value="ovr"),
+            app_commands.Choice(name="Rarity", value="rarity"),
+            app_commands.Choice(name="Card Type", value="type"),
+            app_commands.Choice(name="Catch Date (Newest)", value="date"),
+        ]
+    )
+    async def inventory_cmd(
+        self,
+        interaction: discord.Interaction,
+        sort_by: str = "ovr",
+        reverse: bool = False,
+        user: str | None = None,
+        event: str | None = None,
+    ):
+        await self.list_cards(interaction, sort_by=sort_by, reverse=reverse, user=user, event=event)
 
     @md_group.command(
         name="give", description="Gift a player card to another user"
@@ -673,14 +746,21 @@ class MdSettingsCog(commands.Cog, name="Settings"):
 
 class SettingsCardSelect(discord.ui.Select):
     def __init__(self, cards):
-        options = [
-            discord.SelectOption(
-                label=f"{c.template.display_name} ({c.template.ovr})",
-                description=f"ID: {c.card_id} | {c.template.rarity}",
-                value=c.card_id,
+        options = []
+        for c in cards:
+            badges = []
+            if getattr(c, "upgrade_tier", "NONE") != "NONE":
+                badges.append(c.upgrade_tier)
+            if getattr(c, "refractor", "NONE") != "NONE":
+                badges.append(f"✨{c.refractor}")
+            badge_str = f" [{ ' | '.join(badges) }]" if badges else ""
+            options.append(
+                discord.SelectOption(
+                    label=f"{c.template.display_name} ({c.template.ovr}){badge_str}"[:100],
+                    description=f"#{c.card_id} | {c.template.rarity}"[:100],
+                    value=c.card_id,
+                )
             )
-            for c in cards
-        ]
         super().__init__(placeholder="Select a card to view...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
@@ -699,8 +779,28 @@ class SettingsCardSelect(discord.ui.Select):
         if not card:
             return await interaction.followup.send("Card not found.", ephemeral=True)
 
-        image_buffer = await asyncio.to_thread(generate_card_image, card.template)
+        refractor = getattr(card, "refractor", "NONE")
+        image_buffer = await asyncio.to_thread(generate_card_image, card, refractor)
         file = discord.File(fp=image_buffer, filename=f"{card.template.name}.png")
+
+        tier_boost = 0
+        tier_str = ""
+        ref_str = ""
+        tier = getattr(card, "upgrade_tier", "NONE")
+        if tier == "SILVER":
+            tier_boost = 5
+            tier_str = "\nUpgrade Tier: 🥈 Silver (+5% ATK & DEF)"
+        elif tier == "GOLD":
+            tier_boost = 10
+            tier_str = "\nUpgrade Tier: 🥇 Gold (+10% ATK & DEF)"
+        elif tier == "DIAMOND":
+            tier_boost = 25
+            tier_str = "\nUpgrade Tier: 💎 Diamond (+25% ATK & DEF)"
+
+        if refractor != "NONE":
+            ref_choices = dict(UserCard.REFRACTOR_CHOICES)
+            ref_label = ref_choices.get(refractor, refractor)
+            ref_str = f"\nRefractor Edition: ✨ **{ref_label}**"
 
         caught_str = f"Caught on {discord.utils.format_dt(card.caught_at, 'f')} ({discord.utils.format_dt(card.caught_at, 'R')})."
         
@@ -714,16 +814,26 @@ class SettingsCardSelect(discord.ui.Select):
                     trader_name = member.display_name
             traded_by_str = f"\nTraded by: {trader_name}"
         
-        atk_str = f"ATK: {card.template.attack_stat}"
-        if card.template.attack_boost_pct > 0:
-            atk_str += f" (+{card.template.attack_boost_pct}%)"
-            
-        def_str = f"DEF: {card.template.defence_stat}"
-        if card.template.defence_boost_pct > 0:
-            def_str += f" (+{card.template.defence_boost_pct}%)"
+        total_atk_pct = card.template.attack_boost_pct + tier_boost
+        total_def_pct = card.template.defence_boost_pct + tier_boost
+
+        atk_val = card.template.attack_stat
+        if total_atk_pct > 0:
+            boosted_atk = int(atk_val * (1 + total_atk_pct / 100.0))
+            atk_str = f"ATK: {atk_val} (+{total_atk_pct}% -> **{boosted_atk}**)"
+        else:
+            atk_str = f"ATK: {atk_val}"
+
+        def_val = card.template.defence_stat
+        if total_def_pct > 0:
+            boosted_def = int(def_val * (1 + total_def_pct / 100.0))
+            def_str = f"DEF: {def_val} (+{total_def_pct}% -> **{boosted_def}**)"
+        else:
+            def_str = f"DEF: {def_val}"
             
         content = (
-            f"ID: #{card.card_id}\n"
+            f"Player: **{card.template.display_name}** | #{card.card_id}\n"
+            f"Rarity: **{card.template.rarity}**{ref_str}{tier_str}\n"
             f"{caught_str}{traded_by_str}\n\n"
             f"{atk_str}\n"
             f"{def_str}"

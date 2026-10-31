@@ -168,7 +168,7 @@ class GeneralCog(commands.Cog, name="General"):
 
         await interaction.response.defer()
 
-        image_buffer = await asyncio.to_thread(generate_card_image, card.template)
+        image_buffer = await asyncio.to_thread(generate_card_image, card, card.refractor)
         file = discord.File(fp=image_buffer, filename=f"{card.template.name}.png")
 
         embed = discord.Embed(
@@ -178,6 +178,11 @@ class GeneralCog(commands.Cog, name="General"):
         embed.add_field(name="Position", value=card.template.position, inline=True)
         embed.add_field(name="OVR", value=str(card.template.ovr), inline=True)
         embed.add_field(name="Rarity", value=card.template.rarity, inline=True)
+        if card.refractor and card.refractor != "NONE":
+            ref_label = dict(UserCard.REFRACTOR_CHOICES).get(card.refractor, card.refractor)
+            embed.add_field(name="Refractor", value=f"✨ {ref_label}", inline=True)
+        if card.upgrade_tier and card.upgrade_tier != "NONE":
+            embed.add_field(name="Upgrade Tier", value=card.upgrade_tier, inline=True)
         embed.add_field(name="Card ID", value=card.card_id, inline=True)
         embed.add_field(
             name="Caught At",
@@ -227,18 +232,35 @@ class GeneralCog(commands.Cog, name="General"):
         if not user.has_completed_tutorial:
             @sync_to_async
             def grant_starter_pack():
+                from django.db.models import Q
                 # Pick 11 cards: 1 GK, 4 DEF, 3 MID, 3 ATT
-                gk_qs = list(CardTemplate.objects.filter(position="GK").exclude(card_type="PREMIUM").order_by("?")[:1])
-                def_qs = list(CardTemplate.objects.filter(position__in=["CB", "LB", "RB", "LWB", "RWB"]).exclude(card_type="PREMIUM").order_by("?")[:4])
-                mid_qs = list(CardTemplate.objects.filter(position__in=["CM", "CDM", "CAM", "LM", "RM"]).exclude(card_type="PREMIUM").order_by("?")[:3])
-                att_qs = list(CardTemplate.objects.filter(position__in=["ST", "CF", "RW", "LW"]).exclude(card_type="PREMIUM").order_by("?")[:3])
+                # Filter specifically for UCL Base cards (or Base cards, non-premium, starter OVR <= 86)
+                base_pool = CardTemplate.objects.filter(card_type="BASE")
+                ucl_pool = base_pool.filter(event_name__icontains="UCL")
+                pool = ucl_pool if ucl_pool.exists() else base_pool
+
+                gk_qs = list(pool.filter(position="GK", ovr__lte=86).order_by("?")[:1])
+                if not gk_qs:
+                    gk_qs = list(pool.filter(position="GK").order_by("?")[:1])
+
+                def_qs = list(pool.filter(position__in=["CB", "LB", "RB", "LWB", "RWB"], ovr__lte=86).order_by("?")[:4])
+                if len(def_qs) < 4:
+                    def_qs = list(pool.filter(position__in=["CB", "LB", "RB", "LWB", "RWB"]).order_by("?")[:4])
+
+                mid_qs = list(pool.filter(position__in=["CM", "CDM", "CAM", "LM", "RM"], ovr__lte=86).order_by("?")[:3])
+                if len(mid_qs) < 3:
+                    mid_qs = list(pool.filter(position__in=["CM", "CDM", "CAM", "LM", "RM"]).order_by("?")[:3])
+
+                att_qs = list(pool.filter(position__in=["ST", "CF", "RW", "LW"], ovr__lte=86).order_by("?")[:3])
+                if len(att_qs) < 3:
+                    att_qs = list(pool.filter(position__in=["ST", "CF", "RW", "LW"]).order_by("?")[:3])
 
                 selected = gk_qs + def_qs + mid_qs + att_qs
                 # Fallback if any position lacked templates
                 if len(selected) < 11:
                     existing_ids = [t.id for t in selected]
                     needed = 11 - len(selected)
-                    fillers = list(CardTemplate.objects.exclude(card_type="PREMIUM").exclude(id__in=existing_ids).order_by("?")[:needed])
+                    fillers = list(pool.exclude(id__in=existing_ids).order_by("?")[:needed])
                     selected.extend(fillers)
 
                 created_cards = []

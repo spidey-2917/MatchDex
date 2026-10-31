@@ -724,6 +724,24 @@ class TeamCog(commands.Cog, name="Teams"):
             for item in items
         ]
 
+    async def all_manager_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        @sync_to_async
+        def get_choices():
+            qs = Manager.objects.all()
+            if current:
+                qs = qs.filter(name__icontains=current)
+            return list(qs[:25])
+        items = await get_choices()
+        return [
+            app_commands.Choice(
+                name=f"{m.name} ({m.rarity} | {m.preferred_formation})",
+                value=m.name
+            )
+            for m in items
+        ]
+
     @manager_group.command(name="view", description="View your currently equipped manager")
     async def manager_view(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False)
@@ -840,6 +858,68 @@ class TeamCog(commands.Cog, name="Teams"):
             f"Formation: `{mgr.preferred_formation}` (+{mgr.formation_boost_pct}% {mgr.formation_boost_type})",
             ephemeral=True
         )
+
+    @manager_group.command(name="show", description="Show detailed card design and tactical boosts of a manager")
+    @app_commands.describe(manager_name="Manager name to inspect (or leave blank for equipped manager)")
+    @app_commands.autocomplete(manager_name=all_manager_autocomplete)
+    async def manager_show(self, interaction: discord.Interaction, manager_name: str | None = None):
+        await interaction.response.defer(ephemeral=False)
+        from core.models import Manager, UserManager, UserOwnedManager
+        from core.utils import generate_manager_image
+        import asyncio
+
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def get_manager_data():
+            if manager_name:
+                mgr = Manager.objects.filter(name__iexact=manager_name).first() or Manager.objects.filter(name__icontains=manager_name).first()
+            else:
+                um = UserManager.objects.select_related("manager").filter(owner=user).first()
+                mgr = um.manager if um else None
+
+            if not mgr:
+                return None, False, False
+
+            is_owned = UserOwnedManager.objects.filter(user=user, manager=mgr).exists()
+            is_equipped = UserManager.objects.filter(owner=user, manager=mgr).exists()
+            return mgr, is_owned, is_equipped
+
+        mgr, is_owned, is_equipped = await get_manager_data()
+        if not mgr:
+            msg = f"❌ Manager **{manager_name}** not found." if manager_name else "❌ You don't have a manager equipped! Specify a manager name: `/manager show <name>`."
+            return await interaction.followup.send(msg, ephemeral=True)
+
+        image_buffer = await asyncio.to_thread(generate_manager_image, mgr)
+        file = discord.File(fp=image_buffer, filename=f"manager_{mgr.id}.png")
+
+        ownership_badge = " ⭐ **Equipped Active Coach**" if is_equipped else (" ✅ **In Your Locker**" if is_owned else " 🔒 **Not In Your Locker**")
+
+        embed = discord.Embed(
+            title=f"👔 Manager: {mgr.name}",
+            description=f"**Nationality:** {mgr.nationality or 'Unknown'} | **Rarity:** {mgr.rarity}\n**Status:**{ownership_badge}",
+            color=discord.Color.gold() if mgr.rarity in ("Legendary", "World-Class") else discord.Color.blue()
+        )
+        embed.set_image(url=f"attachment://manager_{mgr.id}.png")
+
+        pref_f = mgr.preferred_formation.upper() if mgr.preferred_formation != "ALL" else "Any Formation"
+        embed.add_field(
+            name="📐 Formation Synergy",
+            value=f"Preferred: `{pref_f}`\nBoost: **+{mgr.formation_boost_pct}% {mgr.formation_boost_type}**",
+            inline=True
+        )
+
+        tactic_name = getattr(mgr, "get_preferred_tactic_display", lambda: mgr.preferred_tactic)()
+        tactic_boost_txt = f"+{mgr.tactic_boost_pct}% {mgr.tactic_boost_type}" if mgr.tactic_boost_pct > 0 and mgr.tactic_boost_type != "NONE" else "None"
+        embed.add_field(
+            name="⚡ Tactic Synergy",
+            value=f"Preferred: `{tactic_name}`\nBoost: **{tactic_boost_txt}**",
+            inline=True
+        )
+        embed.set_footer(text="Managers grant powerful formation & tactic stat boosts in Quick Sim!")
+        await interaction.followup.send(file=file, embed=embed)
 
     # ── Logo Command Group ───────────────────────────────────────
     logo_group = app_commands.Group(
@@ -1013,7 +1093,7 @@ class TeamCog(commands.Cog, name="Teams"):
 
     # ── /upgrade Command ────────────────────────────────────────
     @app_commands.command(name="upgrade", description="Upgrade a card using duplicate copies for a stat boost")
-    @app_commands.describe(card="Card name to upgrade")
+    @app_commands.describe(card="Card name or Card ID to upgrade")
     @app_commands.autocomplete(card=template_autocomplete)
     async def upgrade(self, interaction: discord.Interaction, card: str):
         await interaction.response.defer(ephemeral=False)
@@ -1023,12 +1103,17 @@ class TeamCog(commands.Cog, name="Teams"):
 
         @sync_to_async
         def perform_upgrade():
-            qs = CardTemplate.objects.all()
-            if "|" in card:
-                name, ev = card.split("|", 1)
-                t = qs.filter(name=name, event_name=ev).first()
+            clean_id = card.strip("# ")
+            target_card = UserCard.objects.filter(owner=user, card_id__iexact=clean_id).select_related("template").first()
+            if target_card:
+                t = target_card.template
             else:
-                t = qs.filter(name__iexact=card).first() or qs.filter(name__icontains=card).first()
+                qs = CardTemplate.objects.all()
+                if "|" in card:
+                    name, ev = card.split("|", 1)
+                    t = qs.filter(name=name, event_name=ev).first()
+                else:
+                    t = qs.filter(name__iexact=card).first() or qs.filter(name__icontains=card).first()
 
             if not t:
                 return "not_found", None, None, None
@@ -1045,13 +1130,14 @@ class TeamCog(commands.Cog, name="Teams"):
                     if c:
                         active_ids.add(c.id)
 
-            target_card = None
-            for c in owned:
-                if c.id in active_ids:
-                    target_card = c
-                    break
             if not target_card:
-                target_card = owned[0]
+                for c in owned:
+                    if c.id in active_ids:
+                        target_card = c
+                        break
+                if not target_card:
+                    upgraded_first = [c for c in owned if c.upgrade_tier != "NONE"]
+                    target_card = upgraded_first[0] if upgraded_first else owned[0]
 
             curr_tier = target_card.upgrade_tier
             if curr_tier == "NONE":
@@ -1069,15 +1155,27 @@ class TeamCog(commands.Cog, name="Teams"):
             else:
                 return "max_tier", t, target_card, None
 
+            # Filter candidates to burn: exclude target card and active lineup cards
             burn_candidates = [c for c in owned if c.id != target_card.id and c.id not in active_ids]
             if len(burn_candidates) < needed_copies:
                 return "insufficient", t, (len(burn_candidates), needed_copies, target_tier), None
+
+            # Prioritize sacrificing standard non-refractor, non-upgraded duplicates first
+            burn_candidates.sort(key=lambda c: (
+                0 if (c.refractor == "NONE" and c.upgrade_tier == "NONE") else 1,
+                0 if c.refractor == "NONE" else 1,
+                0 if c.upgrade_tier == "NONE" else 1,
+                c.caught_at
+            ))
 
             burn_ids = [c.id for c in burn_candidates[:needed_copies]]
             UserCard.objects.filter(id__in=burn_ids).delete()
 
             target_card.upgrade_tier = target_tier
             target_card.save(update_fields=["upgrade_tier"])
+
+            user.cards_collected = max(0, user.cards_collected - needed_copies)
+            user.save(update_fields=["cards_collected"])
 
             return "success", t, target_tier, (needed_copies, boost_str, target_card)
 
@@ -1099,15 +1197,23 @@ class TeamCog(commands.Cog, name="Teams"):
         needed_copies, boost_str, target_card = data2
         badge = "🥈" if target_tier == "SILVER" else ("🥇" if target_tier == "GOLD" else "💎")
 
+        from core.utils import generate_card_image
+        import asyncio
+        image_buffer = await asyncio.to_thread(generate_card_image, target_card, target_card.refractor)
+        file = discord.File(fp=image_buffer, filename=f"{target_card.template.name}.png")
+
+        ref_str = f" • ✨ {target_card.refractor} Refractor" if target_card.refractor != "NONE" else ""
+
         embed = discord.Embed(
             title=f"🎉 Card Upgraded: {target_card.template.display_name}!",
-            description=f"{badge} **{target_card.template.name}** has reached **{target_tier.title()} Tier**!\n\n"
+            description=f"{badge} **{target_card.template.name}** reached **{target_tier.title()} Tier**!\n\n"
                         f"⚡ **Stat Boost:** **{boost_str}** in Quick Sim matches\n"
                         f"🔥 **Sacrificed:** {needed_copies} duplicate copies",
             color=discord.Color.green()
         )
-        embed.set_footer(text=f"Card ID: #{target_card.card_id} • Enjoy your powered-up card on the pitch!")
-        await interaction.followup.send(embed=embed)
+        embed.set_image(url=f"attachment://{target_card.template.name}.png")
+        embed.set_footer(text=f"Card ID: #{target_card.card_id}{ref_str} • Enjoy your powered-up card on the pitch!")
+        await interaction.followup.send(file=file, embed=embed)
 
 
 async def setup(bot):
