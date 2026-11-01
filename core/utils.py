@@ -47,22 +47,28 @@ async def template_autocomplete(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:
     from core.models import CardTemplate
+    from django.db.models import Q
 
     @sync_to_async
     def get_choices():
         qs = CardTemplate.objects.all()
         if current:
-            qs = qs.filter(name__icontains=current)
-        return list(qs[:25])
+            qs = qs.filter(
+                Q(name__icontains=current)
+                | Q(event_name__icontains=current)
+                | Q(card_type__icontains=current)
+                | Q(rarity__icontains=current)
+            )
+        return list(qs.order_by("-ovr")[:25])
 
     templates = await get_choices()
-    return [
-        app_commands.Choice(
-            name=f"{t.display_name} ({t.ovr} OVR)",
-            value=t.name if not t.event_name or t.event_name.lower() == "base" else f"{t.name}|{t.event_name}"
-        )
-        for t in templates
-    ]
+    choices = []
+    for t in templates:
+        prem_badge = " ⭐[PREMIUM]" if t.card_type == "PREMIUM" else ""
+        label = f"{t.display_name} ({t.ovr} OVR, {t.rarity}){prem_badge}"[:100]
+        val = f"{t.name}|{t.event_name}" if t.event_name else t.name
+        choices.append(app_commands.Choice(name=label, value=val))
+    return choices
 
 
 SOFIFA_POS_MAP = {
@@ -456,12 +462,19 @@ def generate_card_image(card_input, refractor: str = "NONE"):
 def generate_manager_image(manager):
     """Generates or loads the card design image for a manager."""
     img = None
-    if manager.image and manager.image.name:
+    if manager.image:
         try:
-            image_path = os.path.join(django_settings.MEDIA_ROOT, manager.image.name)
-            img = Image.open(image_path).convert("RGB")
-            img.thumbnail((800, 1200), Image.Resampling.LANCZOS)
-        except (OSError, IOError, FileNotFoundError):
+            if hasattr(manager.image, "path") and os.path.exists(manager.image.path):
+                img = Image.open(manager.image.path).convert("RGB")
+            elif manager.image.name:
+                image_path = os.path.join(django_settings.MEDIA_ROOT, manager.image.name)
+                if os.path.exists(image_path):
+                    img = Image.open(image_path).convert("RGB")
+                else:
+                    img = Image.open(manager.image).convert("RGB")
+            if img:
+                img.thumbnail((800, 1200), Image.Resampling.LANCZOS)
+        except Exception:
             pass
 
     if img is None:
@@ -512,6 +525,75 @@ def generate_manager_image(manager):
             draw.text((45, 435), "Tactic Boost: None", fill=(150, 150, 150), font=font_body)
 
         draw.text((25, 545), "MATCHDEX TACTICAL LEADERSHIP", fill=(120, 130, 140), font=font_body)
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG", optimize=True)
+    buffer.seek(0)
+    return buffer
+
+
+def generate_logo_image(logo):
+    """Generates or loads the card design image for a club crest / logo."""
+    img = None
+    if logo.image:
+        try:
+            if hasattr(logo.image, "path") and os.path.exists(logo.image.path):
+                img = Image.open(logo.image.path).convert("RGB")
+            elif logo.image.name:
+                image_path = os.path.join(django_settings.MEDIA_ROOT, logo.image.name)
+                if os.path.exists(image_path):
+                    img = Image.open(image_path).convert("RGB")
+                else:
+                    img = Image.open(logo.image).convert("RGB")
+            if img:
+                img.thumbnail((800, 1200), Image.Resampling.LANCZOS)
+        except Exception:
+            pass
+
+    if img is None:
+        width, height = 400, 600
+        rarity_colors = {
+            "Rare": (30, 144, 255),
+            "Epic": (138, 43, 226),
+            "Legendary": (255, 215, 0),
+        }
+        color = rarity_colors.get(logo.rarity, (138, 43, 226))
+        img = Image.new("RGB", (width, height), color=(18, 22, 28))
+        draw = ImageDraw.Draw(img)
+
+        # Draw decorative card border
+        border_width = 8
+        for i in range(border_width):
+            draw.rectangle([i, i, width - 1 - i, height - 1 - i], outline=color)
+
+        try:
+            font_title = ImageFont.truetype("arial.ttf", 32)
+            font_sub = ImageFont.truetype("arial.ttf", 22)
+            font_body = ImageFont.truetype("arial.ttf", 18)
+        except (OSError, IOError):
+            font_title = ImageFont.load_default()
+            font_sub = ImageFont.load_default()
+            font_body = ImageFont.load_default()
+
+        # Header
+        draw.text((25, 30), "🛡️ CLUB CREST", fill=color, font=font_sub)
+        club_display = logo.club or logo.name
+        draw.text((25, 65), club_display[:22], fill=(255, 255, 255), font=font_title)
+        draw.text((25, 115), f"Rarity: {logo.rarity.upper()}", fill=color, font=font_sub)
+
+        # Center Shield Graphic
+        shield_box = [60, 165, width - 60, 365]
+        draw.rectangle(shield_box, fill=(28, 34, 44), outline=color, width=3)
+        draw.text((115, 245), "🛡️ CREST", fill=color, font=font_title)
+
+        # Synergy info card
+        draw.rectangle([25, 390, width - 25, 520], fill=(25, 30, 38), outline=color)
+        draw.text((45, 405), "CLUB SYNERGY BONUSES", fill=color, font=font_sub)
+        draw.text((45, 440), f"Boost: +{logo.boost_val}% {logo.boost_type}", fill=(100, 255, 100), font=font_body)
+        pref_t = getattr(logo, "preferred_tactic", "ALL")
+        draw.text((45, 470), f"Preferred Tactic: {pref_t}", fill=(200, 200, 200), font=font_body)
+
+        draw.text((25, 545), "MATCHDEX OFFICIAL CLUB CREST", fill=(120, 130, 140), font=font_body)
 
     buffer = io.BytesIO()
     img.save(buffer, format="PNG", optimize=True)
@@ -674,6 +756,10 @@ class CardListView(discord.ui.View):
                 order = ["-template__card_type", "-template__ovr"]
                 if self.reverse: order = ["template__card_type", "template__ovr"]
                 qs = qs.order_by(*order)
+            elif self.sort_by == "refractor":
+                order = ["-template__ovr", "-caught_at"]
+                if self.reverse: order = ["template__ovr", "caught_at"]
+                qs = qs.exclude(refractor="NONE").order_by(*order)
             elif self.sort_by == "date":
                 order = ["-caught_at"]
                 if self.reverse: order = ["caught_at"]
@@ -694,7 +780,7 @@ class CardListView(discord.ui.View):
         # To be overridden by subclasses
         quit_btn = discord.ui.Button(label="Quit", style=discord.ButtonStyle.danger, row=1)
         async def cb_quit(it):
-            await it.response.edit_message(content="🛑 List closed.", view=None)
+            await it.response.edit_message(content="🛑 List closed.", embed=None, view=None)
             self.stop()
         quit_btn.callback = cb_quit
         self.add_item(quit_btn)
@@ -752,10 +838,24 @@ class CardListView(discord.ui.View):
         # Row 2+: Selection
         self.add_selection_menu(self.current_cards)
 
-        content = f"**{self.user_db.username}'s Cards**\n" \
-                  f"Page {self.page + 1} of {max(1, total_pages)} ({self.total_cards} cards total)"
+        embed = discord.Embed(
+            title=f"🃏 {self.user_db.username}'s Card Inventory",
+            description=f"**Page {self.page + 1} of {max(1, total_pages)}** • Total Cards: **{self.total_cards}**\n*Select a card from the dropdown below to view full details.*",
+            color=discord.Color.blue()
+        )
+
+        lines = []
+        for c in self.current_cards:
+            tier_badge = f" `[{c.upgrade_tier}]`" if getattr(c, "upgrade_tier", "NONE") != "NONE" else ""
+            ref_badge = f" `[✨{c.refractor}]`" if getattr(c, "refractor", "NONE") != "NONE" else ""
+            pos = getattr(c.template, "position", "CM")
+            ovr = getattr(c.template, "ovr", 0)
+            lines.append(f"`#{c.card_id}` **{c.template.display_name}** ({ovr} {pos}) • {c.template.rarity}{tier_badge}{ref_badge}")
+
+        if lines:
+            embed.add_field(name="Cards on this page", value="\n".join(lines), inline=False)
 
         if interaction.response.is_done():
-            await interaction.edit_original_response(content=content, view=self)
+            await interaction.edit_original_response(content=None, embed=embed, view=self)
         else:
-            await interaction.response.send_message(content=content, view=self, ephemeral=self.ephemeral)
+            await interaction.response.send_message(embed=embed, view=self, ephemeral=self.ephemeral)

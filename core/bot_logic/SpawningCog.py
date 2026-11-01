@@ -241,7 +241,7 @@ class SignManagerModal(discord.ui.Modal, title="Sign Manager"):
             await update_objective_progress(user, "claim_card")
 
             await interaction.response.send_message(
-                f"👔 {interaction.user.mention} successfully signed **{self.manager.name}**!{eq_text}"
+                f"👔 {interaction.user.mention} successfully signed **{self.manager.name}** ({self.manager.rarity})!{eq_text}"
             )
             if interaction.message:
                 await interaction.message.edit(view=None)
@@ -691,10 +691,18 @@ class SpawningCog(commands.Cog, name="Spawning"):
         if not manager:
             return False
 
+        rarity_colors = {
+            "Rare": discord.Color.blue(),
+            "Epic": discord.Color.purple(),
+            "Legendary": discord.Color.gold(),
+            "World-Class": discord.Color.red(),
+        }
+        mgr_color = rarity_colors.get(manager.rarity, discord.Color.gold())
+
         embed = discord.Embed(
-            title="👔 A World-Class Manager has appeared!",
+            title=f"👔 A {manager.rarity} Manager has appeared!",
             description="A renowned tactician has arrived! Click below to sign them to your club.",
-            color=discord.Color.blue(),
+            color=mgr_color,
         )
         embed.add_field(name="Manager", value=f"**{manager.name}**", inline=True)
         embed.add_field(name="Rarity", value=manager.rarity, inline=True)
@@ -704,7 +712,7 @@ class SpawningCog(commands.Cog, name="Spawning"):
             value=f"**{pref_f}** (+{manager.formation_boost_pct}% {manager.formation_boost_type})",
             inline=True
         )
-        pref_t = manager.get_preferred_tactic_display()
+        pref_t = getattr(manager, "get_preferred_tactic_display", lambda: manager.preferred_tactic)()
         embed.add_field(
             name="Tactic Synergy",
             value=f"**{pref_t}** (+{manager.tactic_boost_pct}% {manager.tactic_boost_type})",
@@ -715,9 +723,9 @@ class SpawningCog(commands.Cog, name="Spawning"):
         if manager.image:
             try:
                 import os
-                if os.path.exists(manager.image.path):
+                if hasattr(manager.image, "path") and os.path.exists(manager.image.path):
                     file = discord.File(manager.image.path, filename=f"manager_{manager.id}.png")
-                    embed.set_thumbnail(url=f"attachment://manager_{manager.id}.png")
+                    embed.set_image(url=f"attachment://manager_{manager.id}.png")
             except Exception as e:
                 log.warning(f"Failed to load manager image: {e}")
 
@@ -726,9 +734,9 @@ class SpawningCog(commands.Cog, name="Spawning"):
                 from core.utils import generate_manager_image
                 image_buffer = await asyncio.to_thread(generate_manager_image, manager)
                 file = discord.File(fp=image_buffer, filename=f"manager_{manager.id}.png")
-                embed.set_thumbnail(url=f"attachment://manager_{manager.id}.png")
-            except Exception:
-                pass
+                embed.set_image(url=f"attachment://manager_{manager.id}.png")
+            except Exception as e:
+                log.warning(f"Failed to generate manager image: {e}")
 
         view = SignManagerView(manager)
         try:
@@ -754,17 +762,25 @@ class SpawningCog(commands.Cog, name="Spawning"):
         if not logo:
             return False
 
+        rarity_colors = {
+            "Rare": discord.Color.blue(),
+            "Epic": discord.Color.purple(),
+            "Legendary": discord.Color.gold(),
+        }
+        logo_color = rarity_colors.get(logo.rarity, discord.Color.purple())
+
         embed = discord.Embed(
-            title="🛡️ A Legendary Club Crest has appeared!",
+            title=f"🛡️ A {logo.rarity} Club Crest has appeared!",
             description="A historic club crest is up for grabs! Click below to claim it for your club.",
-            color=discord.Color.purple(),
+            color=logo_color,
         )
         club_name = logo.club or logo.name
         embed.add_field(name="Crest / Club", value=f"**{club_name}**", inline=True)
         embed.add_field(name="Rarity", value=logo.rarity, inline=True)
+        pref_tactic = getattr(logo, "preferred_tactic", "ALL")
         embed.add_field(
             name="Synergy Boost",
-            value=f"+{logo.boost_val}% {logo.boost_type} (Tactic: {logo.get_preferred_tactic_display()})",
+            value=f"+{logo.boost_val}% {logo.boost_type} (Tactic: {pref_tactic})",
             inline=False
         )
 
@@ -772,11 +788,20 @@ class SpawningCog(commands.Cog, name="Spawning"):
         if logo.image:
             try:
                 import os
-                if os.path.exists(logo.image.path):
+                if hasattr(logo.image, "path") and os.path.exists(logo.image.path):
                     file = discord.File(logo.image.path, filename=f"logo_{logo.id}.png")
-                    embed.set_thumbnail(url=f"attachment://logo_{logo.id}.png")
+                    embed.set_image(url=f"attachment://logo_{logo.id}.png")
             except Exception as e:
                 log.warning(f"Failed to load logo image: {e}")
+
+        if not file:
+            try:
+                from core.utils import generate_logo_image
+                image_buffer = await asyncio.to_thread(generate_logo_image, logo)
+                file = discord.File(fp=image_buffer, filename=f"logo_{logo.id}.png")
+                embed.set_image(url=f"attachment://logo_{logo.id}.png")
+            except Exception as e:
+                log.warning(f"Failed to generate logo image: {e}")
 
         view = ClaimLogoView(logo)
         try:

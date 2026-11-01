@@ -173,6 +173,14 @@ class InfoCog(commands.Cog, name="Info"):
     async def favourite(self, interaction: discord.Interaction, card_id: str | None = None):
         await self._handle_favorite(interaction, card_id)
 
+    @app_commands.command(
+        name="lock",
+        description="Lock or unlock a card to strictly protect it from upgrades or sacrifices",
+    )
+    @app_commands.describe(card_id="Card ID to lock/unlock (optional - leave empty to view locked cards)")
+    async def lock(self, interaction: discord.Interaction, card_id: str | None = None):
+        await self._handle_favorite(interaction, card_id)
+
     async def _handle_favorite(self, interaction: discord.Interaction, card_id: str | None = None):
         from core.models import DiscordUser, FavouriteCard, UserCard
 

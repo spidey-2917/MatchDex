@@ -446,6 +446,7 @@ class MdSettingsCog(commands.Cog, name="Settings"):
     @app_commands.choices(
         sort_by=[
             app_commands.Choice(name="OVR (Highest)", value="ovr"),
+            app_commands.Choice(name="Refractors Only", value="refractor"),
             app_commands.Choice(name="Rarity", value="rarity"),
             app_commands.Choice(name="Card Type", value="type"),
             app_commands.Choice(name="Catch Date (Newest)", value="date"),
@@ -508,6 +509,7 @@ class MdSettingsCog(commands.Cog, name="Settings"):
     @app_commands.choices(
         sort_by=[
             app_commands.Choice(name="OVR (Highest)", value="ovr"),
+            app_commands.Choice(name="Refractors Only", value="refractor"),
             app_commands.Choice(name="Rarity", value="rarity"),
             app_commands.Choice(name="Card Type", value="type"),
             app_commands.Choice(name="Catch Date (Newest)", value="date"),
@@ -529,6 +531,7 @@ class MdSettingsCog(commands.Cog, name="Settings"):
     @app_commands.choices(
         sort_by=[
             app_commands.Choice(name="OVR (Highest)", value="ovr"),
+            app_commands.Choice(name="Refractors Only", value="refractor"),
             app_commands.Choice(name="Rarity", value="rarity"),
             app_commands.Choice(name="Card Type", value="type"),
             app_commands.Choice(name="Catch Date (Newest)", value="date"),
@@ -754,10 +757,11 @@ class SettingsCardSelect(discord.ui.Select):
             if getattr(c, "refractor", "NONE") != "NONE":
                 badges.append(f"✨{c.refractor}")
             badge_str = f" [{ ' | '.join(badges) }]" if badges else ""
+            ref_note = f" | ✨{c.refractor} Refractor" if getattr(c, "refractor", "NONE") != "NONE" else ""
             options.append(
                 discord.SelectOption(
                     label=f"{c.template.display_name} ({c.template.ovr}){badge_str}"[:100],
-                    description=f"#{c.card_id} | {c.template.rarity}"[:100],
+                    description=f"#{c.card_id} | {c.template.rarity}{ref_note}"[:100],
                     value=c.card_id,
                 )
             )

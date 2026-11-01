@@ -426,21 +426,32 @@ class AdminCog(commands.Cog, name="Admin"):
     @app_commands.autocomplete(player_search=template_autocomplete)
     @app_commands.describe(
         user="User to give the card to",
-        player_search="Card name to give",
+        player_search="Card name, ID, or selection from autocomplete",
+        event="Specific event filter (optional)",
+        card_type="Filter by card type (optional)",
         refractor="Refractor edition to grant (optional)",
     )
-    @app_commands.choices(refractor=[
-        app_commands.Choice(name="Standard (No Refractor)", value="NONE"),
-        app_commands.Choice(name="Red Edge Refractor (1/50)", value="RED"),
-        app_commands.Choice(name="Rainbow Edge Refractor (1/100)", value="RAINBOW"),
-        app_commands.Choice(name="Black Edge Refractor (1/250)", value="BLACK"),
-        app_commands.Choice(name="Gold Edge Refractor (1/800)", value="GOLD"),
-    ])
+    @app_commands.choices(
+        card_type=[
+            app_commands.Choice(name="Any / Default", value="ANY"),
+            app_commands.Choice(name="Premium", value="PREMIUM"),
+            app_commands.Choice(name="Base", value="BASE"),
+        ],
+        refractor=[
+            app_commands.Choice(name="Standard (No Refractor)", value="NONE"),
+            app_commands.Choice(name="Red Edge Refractor (1/50)", value="RED"),
+            app_commands.Choice(name="Rainbow Edge Refractor (1/100)", value="RAINBOW"),
+            app_commands.Choice(name="Black Edge Refractor (1/250)", value="BLACK"),
+            app_commands.Choice(name="Gold Edge Refractor (1/800)", value="GOLD"),
+        ]
+    )
     async def give(
         self,
         interaction: discord.Interaction,
         user: discord.Member,
         player_search: str,
+        event: str | None = None,
+        card_type: str = "ANY",
         refractor: str = "NONE",
     ):
         if not await self.check_admin(interaction):
@@ -452,12 +463,53 @@ class AdminCog(commands.Cog, name="Admin"):
 
         @sync_to_async
         def find():
-            # Handle autocomplete value (format: Name|Event)
+            import re
+            from django.db.models import Q
+            clean_val = player_search.strip("# ")
+            if clean_val.isdigit():
+                c = CardTemplate.objects.filter(id=int(clean_val)).first()
+                if c:
+                    return c
+
+            qs = CardTemplate.objects.all()
+            if card_type and card_type != "ANY":
+                qs = qs.filter(card_type__iexact=card_type)
+            if event:
+                qs = qs.filter(event_name__icontains=event)
+
+            # 1. Pipe format (autocomplete: Name|Event)
             if "|" in player_search:
                 name, ev = player_search.split("|", 1)
-                return CardTemplate.objects.filter(name=name, event_name=ev).first()
-            # Fallback to name search for manual typing
-            return CardTemplate.objects.filter(name__icontains=player_search).first()
+                match = qs.filter(name__iexact=name, event_name__iexact=ev).first()
+                if match:
+                    return match
+                match = qs.filter(name__icontains=name, event_name__icontains=ev).first()
+                if match:
+                    return match
+
+            # 2. Display name with event in parens: "Paolo Maldini (Icon)"
+            m = re.match(r"^(.*?)\s*\((.*?)\)$", player_search.strip())
+            if m:
+                base_n, ev_n = m.group(1).strip(), m.group(2).strip()
+                match = qs.filter(name__icontains=base_n, event_name__icontains=ev_n).first()
+                if match:
+                    return match
+
+            # 3. If searching specifically for premium or contains "premium"
+            if "premium" in player_search.lower():
+                clean_name = re.sub(r"(?i)premium", "", player_search).strip(" -_()[]")
+                prem_match = qs.filter(name__icontains=clean_name, card_type="PREMIUM").first()
+                if prem_match:
+                    return prem_match
+
+            # 4. Try exact match first, then contains, ordered by highest OVR
+            exact_match = qs.filter(name__iexact=player_search).order_by("-ovr").first()
+            if exact_match:
+                return exact_match
+
+            return qs.filter(
+                Q(name__icontains=player_search) | Q(event_name__icontains=player_search)
+            ).order_by("-ovr").first()
 
         card = await find()
         if not card:
@@ -471,8 +523,9 @@ class AdminCog(commands.Cog, name="Admin"):
         await db_user.asave()
 
         ref_txt = f" ({refractor} Refractor)" if refractor != "NONE" else ""
+        prem_txt = " ⭐[PREMIUM]" if card.card_type == "PREMIUM" else ""
         await interaction.response.send_message(
-            f"Gave **{card.display_name}** ({card.rarity}){ref_txt} to {user.mention}!", ephemeral=True
+            f"Gave **{card.display_name}** ({card.ovr} OVR, {card.rarity}){prem_txt}{ref_txt} to {user.mention}!", ephemeral=True
         )
 
     @admin_group.command(

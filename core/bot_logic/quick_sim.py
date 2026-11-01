@@ -19,6 +19,7 @@ Simulates a full 90-minute football match using RFM27 state machine and mathemat
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
@@ -39,6 +40,23 @@ class PlayerSnapshot:
     yellow_cards: int = 0
     is_sent_off: bool = False
     is_injured: bool = False
+    is_premium: bool = False
+
+
+def calculate_duel_win_probability(stat_a: float, stat_b: float, k: float = 0.22) -> float:
+    """
+    Computes duel win probability using a logistic sigmoid based on stat delta.
+    - delta = 0:  50.0%
+    - delta = +1: 55.5% (a single OVR difference matters!)
+    - delta = +3: 65.9%
+    - delta = +5: 75.0%
+    - delta = +10: 89.9%
+    - delta = +15: 96.4%
+    - delta = +20: 98.8% (low OVR has negligible chance against high OVR)
+    """
+    delta = stat_a - stat_b
+    delta = max(-35.0, min(35.0, delta))
+    return 1.0 / (1.0 + math.exp(-k * delta))
 
 
 @dataclass
@@ -242,7 +260,7 @@ def normalize_formation_str(f: str) -> str:
 
 def calculate_manager_boosts(manager, formation: str, tactic: str):
     """
-    Computes dynamic manager boosts based on formation and tactic matching.
+    Computes dynamic manager boosts based on formation, tactic matching, and manager rarity.
     Returns: (att_multiplier, def_multiplier, clearance_bonus, primary_boost_type)
     """
     att_mult = 1.0
@@ -253,13 +271,24 @@ def calculate_manager_boosts(manager, formation: str, tactic: str):
     if not manager:
         return att_mult, def_mult, clearance_bonus, primary_type
 
+    # Manager rarity scale multiplier (World-Class / Legendary give significantly bigger boosts!)
+    rarity = getattr(manager, "rarity", "Legendary") or "Legendary"
+    rarity_multipliers = {
+        "World-Class": 1.5,
+        "Legendary": 1.25,
+        "Epic": 1.0,
+        "Rare": 0.8,
+    }
+    rarity_mult = rarity_multipliers.get(rarity, 1.0)
+
     norm_pref = normalize_formation_str(getattr(manager, "preferred_formation", "all"))
     norm_form = normalize_formation_str(formation)
 
     # 1. Formation Synergy
     if norm_pref in ("all", norm_form):
         b_type = getattr(manager, "formation_boost_type", None) or getattr(manager, "boost_type", "ATTACKING")
-        pct = getattr(manager, "formation_boost_pct", 5) or 5
+        base_pct = getattr(manager, "formation_boost_pct", 5) or 5
+        pct = base_pct * rarity_mult
         rate = pct / 100.0
         primary_type = b_type
 
@@ -277,7 +306,8 @@ def calculate_manager_boosts(manager, formation: str, tactic: str):
     pref_tactic = getattr(manager, "preferred_tactic", "ALL") or "ALL"
     if pref_tactic == "ALL" or pref_tactic.lower() == (tactic or "").lower():
         t_type = getattr(manager, "tactic_boost_type", "NONE")
-        t_pct = getattr(manager, "tactic_boost_pct", 0) or 0
+        t_base_pct = getattr(manager, "tactic_boost_pct", 0) or 0
+        t_pct = t_base_pct * rarity_mult
         if t_type and t_type != "NONE" and t_pct > 0:
             t_rate = t_pct / 100.0
             if not primary_type or primary_type == "NONE":
@@ -337,14 +367,26 @@ def build_team_data(
                 atk = int(atk * (1 + total_atk_boost / 100.0))
             if total_def_boost > 0:
                 df = int(df * (1 + total_def_boost / 100.0))
+
+            # PREMIUM card bonus: premium cards in dex perform noticeably better
+            is_premium = (getattr(t, "card_type", "") == "PREMIUM") or bool(getattr(t, "premium_type", None))
+            if is_premium:
+                atk = int(round(atk * 1.15))
+                df = int(round(df * 1.15))
+
+            card_ovr = getattr(t, "ovr", None) or max(atk, df)
+            if is_premium:
+                card_ovr = max(card_ovr, int(round(card_ovr * 1.08)))
+
             pos = getattr(t, "position", "CM")
             snap = PlayerSnapshot(
                 name=getattr(t, "name", "Player"),
                 position=pos,
                 attack=atk,
                 defence=df,
-                ovr=getattr(t, "ovr", None) or max(atk, df),
+                ovr=card_ovr,
                 slot="",
+                is_premium=is_premium,
             )
         players.append(snap)
 
@@ -523,11 +565,17 @@ def change_team_tactic(team: TeamData, new_tactic: str) -> bool:
     return True
 
 
+def _weighted_pick_player(pool: list[PlayerSnapshot]) -> PlayerSnapshot:
+    if not pool:
+        return None
+    weights = [((float(p.ovr) ** 2) * (1.6 if getattr(p, "is_premium", False) else 1.0)) for p in pool]
+    return random.choices(pool, weights=weights, k=1)[0]
+
+
 def _pick_shooter(team: TeamData) -> PlayerSnapshot:
     """
-    Port of RFM27 choosePlayerAndShoot shooter selection:
+    Chooses shooter weighted by line and player skill/premium status.
     60% Forward, 30% Midfielder, 10% Defender.
-    Filters out sent off players with automatic line fallbacks.
     """
     roll = random.random() * 100.0
     active_att = [p for p in team.attackers if not p.is_sent_off]
@@ -535,18 +583,18 @@ def _pick_shooter(team: TeamData) -> PlayerSnapshot:
     active_def = [p for p in team.defenders if not p.is_sent_off]
 
     if roll <= 60 and active_att:
-        return random.choice(active_att)
+        return _weighted_pick_player(active_att)
     elif roll <= 90 and active_mid:
-        return random.choice(active_mid)
+        return _weighted_pick_player(active_mid)
     elif active_def:
-        return random.choice(active_def)
+        return _weighted_pick_player(active_def)
     elif active_att:
-        return random.choice(active_att)
+        return _weighted_pick_player(active_att)
     elif active_mid:
-        return random.choice(active_mid)
+        return _weighted_pick_player(active_mid)
 
     avail = [p for p in team.players if not p.is_sent_off]
-    return random.choice(avail) if avail else (team.gk or team.players[0])
+    return _weighted_pick_player(avail) if avail else (team.gk or team.players[0])
 
 
 def _calculate_assist(team: TeamData, scorer: PlayerSnapshot) -> Optional[PlayerSnapshot]:
@@ -763,20 +811,27 @@ class MatchSimulationSession:
         if self.phase_state == "MIDDLE":
             home_mid = self.home.mid_rating * self.home_boost
             away_mid = self.away.mid_rating
-            if home_mid > away_mid:
-                home_mid *= self.boost_factor
-            else:
-                away_mid *= self.boost_factor
 
-            home_mid_prob = home_mid / (home_mid + away_mid)
+            # Premium presence in midfield adds elite composure and tempo control
+            home_prem = sum(1 for p in self.home.midfielders if getattr(p, "is_premium", False))
+            away_prem = sum(1 for p in self.away.midfielders if getattr(p, "is_premium", False))
+            home_mid += home_prem * 3.0
+            away_mid += away_prem * 3.0
+
+            # Momentum bonus
+            momentum_edge = (self.current_home_momentum - 50.0) * 0.12
+            home_mid += momentum_edge
+
+            # Steep Elo/sigmoid duel scaling: every OVR difference matters!
+            home_mid_prob = calculate_duel_win_probability(home_mid, away_mid, k=0.22)
             if random.random() < home_mid_prob:
                 attacking_team, defending_team = self.home, self.away
                 atk_side = "home"
-                self.current_home_momentum = min(82.0, self.current_home_momentum + random.uniform(2.0, 3.5))
+                self.current_home_momentum = min(85.0, self.current_home_momentum + random.uniform(2.5, 4.0))
             else:
                 attacking_team, defending_team = self.away, self.home
                 atk_side = "away"
-                self.current_home_momentum = max(18.0, self.current_home_momentum - random.uniform(2.0, 3.5))
+                self.current_home_momentum = max(15.0, self.current_home_momentum - random.uniform(2.5, 4.0))
 
             if random.random() < 0.40:
                 step_events.append(MatchEvent(
@@ -802,12 +857,15 @@ class MatchSimulationSession:
 
             atk_power = attacking_team.att_rating * (self.home_boost if atk_side == "home" else 1.0)
             def_power = defending_team.def_rating * (self.home_boost if atk_side == "away" else 1.0)
-            if atk_power > def_power:
-                atk_power *= self.boost_factor
-            else:
-                def_power *= self.boost_factor
 
-            atk_prob = atk_power / (atk_power + def_power * 1.18)
+            # Premium presence adds decisive breakthrough / defensive lockdown
+            atk_prem = sum(1 for p in attacking_team.attackers if getattr(p, "is_premium", False))
+            def_prem = sum(1 for p in defending_team.defenders if getattr(p, "is_premium", False))
+            atk_power += atk_prem * 3.0
+            def_power += def_prem * 3.0
+
+            # Defenders receive a slight positioning baseline (+2.0)
+            atk_prob = calculate_duel_win_probability(atk_power, def_power + 2.0, k=0.20)
 
             if random.random() < atk_prob:
                 self.phase_state = "DANGEROUS"
@@ -956,10 +1014,19 @@ class MatchSimulationSession:
                 else:
                     self.away_total_shots += 1
 
-                shooter_factor = shooter.attack * (self.home_boost if atk_side == "home" else 1.0)
-                gk_factor = gk.defence * (self.home_boost if atk_side == "away" else 1.0) * 2.15
+                shooter_factor = float(shooter.attack) * (self.home_boost if atk_side == "home" else 1.0)
+                gk_factor = float(gk.defence) * (self.home_boost if atk_side == "away" else 1.0)
 
-                goal_prob = shooter_factor / (shooter_factor + gk_factor)
+                # Premium lethal composure / elite shot stopping
+                if getattr(shooter, "is_premium", False):
+                    shooter_factor *= 1.20
+                if getattr(gk, "is_premium", False):
+                    gk_factor *= 1.20
+
+                # Steep goal conversion probability (goalkeeper has baseline positioning advantage +4.0)
+                goal_prob = calculate_duel_win_probability(shooter_factor, gk_factor + 4.0, k=0.24)
+                # Bounded so low OVR against high OVR is practically negligible (2%), while high OVR finishes clinically
+                goal_prob = max(0.02, min(0.88, goal_prob))
                 shot_roll = random.uniform(0.0, 1.0)
 
                 if shot_roll < goal_prob:

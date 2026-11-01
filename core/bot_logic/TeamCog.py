@@ -790,7 +790,20 @@ class TeamCog(commands.Cog, name="Teams"):
                 inline=False
             )
         embed.set_footer(text="Managers provide powerful stat boosts in Quick Sim matches!")
-        await interaction.followup.send(embed=embed)
+
+        file = None
+        try:
+            from core.utils import generate_manager_image
+            image_buffer = await asyncio.to_thread(generate_manager_image, mgr)
+            file = discord.File(fp=image_buffer, filename=f"manager_{mgr.id}.png")
+            embed.set_image(url=f"attachment://manager_{mgr.id}.png")
+        except Exception:
+            pass
+
+        if file:
+            await interaction.followup.send(embed=embed, file=file)
+        else:
+            await interaction.followup.send(embed=embed)
 
     @manager_group.command(name="list", description="List all managers in your collection")
     async def manager_list(self, interaction: discord.Interaction):
@@ -968,7 +981,20 @@ class TeamCog(commands.Cog, name="Teams"):
             description=f"**Club:** {logo.club or 'Custom'} | **Rarity:** {logo.rarity}\n**Bonus:** +{logo.boost_val} to team stats",
             color=discord.Color.green()
         )
-        await interaction.followup.send(embed=embed)
+
+        file = None
+        try:
+            from core.utils import generate_logo_image
+            image_buffer = await asyncio.to_thread(generate_logo_image, logo)
+            file = discord.File(fp=image_buffer, filename=f"logo_{logo.id}.png")
+            embed.set_image(url=f"attachment://logo_{logo.id}.png")
+        except Exception:
+            pass
+
+        if file:
+            await interaction.followup.send(embed=embed, file=file)
+        else:
+            await interaction.followup.send(embed=embed)
 
     @logo_group.command(name="list", description="List all club logos in your collection")
     async def logo_list(self, interaction: discord.Interaction):
@@ -1155,15 +1181,26 @@ class TeamCog(commands.Cog, name="Teams"):
             else:
                 return "max_tier", t, target_card, None
 
-            # Filter candidates to burn: exclude target card and active lineup cards
-            burn_candidates = [c for c in owned if c.id != target_card.id and c.id not in active_ids]
+            # Filter candidates to burn:
+            # 1. Exclude the target card being upgraded
+            # 2. Exclude cards in the active squad lineup
+            # 3. STRICT PROTECTION: Refractor editions CANNOT be sacrificed!
+            # 4. STRICT PROTECTION: Favorited / Locked cards CANNOT be sacrificed!
+            from core.models import FavouriteCard
+            fav_ids = set(FavouriteCard.objects.filter(owner=user).values_list("card_id", flat=True))
+
+            burn_candidates = [
+                c for c in owned 
+                if c.id != target_card.id 
+                and c.id not in active_ids 
+                and (c.refractor == "NONE" or not c.refractor)
+                and c.id not in fav_ids
+            ]
             if len(burn_candidates) < needed_copies:
                 return "insufficient", t, (len(burn_candidates), needed_copies, target_tier), None
 
-            # Prioritize sacrificing standard non-refractor, non-upgraded duplicates first
+            # Prioritize sacrificing standard non-upgraded duplicates first, oldest caught first
             burn_candidates.sort(key=lambda c: (
-                0 if (c.refractor == "NONE" and c.upgrade_tier == "NONE") else 1,
-                0 if c.refractor == "NONE" else 1,
                 0 if c.upgrade_tier == "NONE" else 1,
                 c.caught_at
             ))
@@ -1189,7 +1226,7 @@ class TeamCog(commands.Cog, name="Teams"):
         elif status == "insufficient":
             avail, needed, target_tier = data1
             return await interaction.followup.send(
-                f"❌ Insufficient duplicates! You have **{avail}** sacrificeable duplicates, but need **{needed}** copies to upgrade to **{target_tier}**.\n*(Note: Cards currently in your active squad lineup cannot be sacrificed)*",
+                f"❌ Insufficient duplicates! You have **{avail}** sacrificeable duplicates, but need **{needed}** copies to upgrade to **{target_tier}**.\n*(Note: Cards in your active squad lineup, ✨ Refractor editions, and ❤️ Favorited/Locked cards are strictly protected and cannot be sacrificed)*",
                 ephemeral=True
             )
 
