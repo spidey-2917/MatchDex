@@ -453,6 +453,8 @@ class MdSettingsCog(commands.Cog, name="Settings"):
         ]
     )
     async def list_cards(self, interaction: discord.Interaction, sort_by: str = "ovr", reverse: bool = False, user: str | None = None, event: str | None = None):
+        await interaction.response.defer()
+
         target_db = None
         target_id = None
         target_name = None
@@ -478,24 +480,27 @@ class MdSettingsCog(commands.Cog, name="Settings"):
                 target_db = await DiscordUser.objects.filter(username__icontains=user).afirst()
 
             if not target_db:
-                return await interaction.response.send_message(f"User '{user}' not found.", ephemeral=True)
+                return await interaction.followup.send(f"User '{user}' not found.", ephemeral=True)
             
             target_id = target_db.discord_id
-            target_name = target_db.username
+            target_name = target_db.username or f"User #{target_id}"
         else:
             target_id = interaction.user.id
-            target_name = interaction.user.name
+            target_name = interaction.user.display_name or interaction.user.name
             target_db, _ = await DiscordUser.objects.aget_or_create(
                 discord_id=target_id,
                 defaults={"username": target_name},
             )
+            if not target_db.username or target_db.username != target_name:
+                target_db.username = target_name
+                await target_db.asave(update_fields=["username"])
 
         # Privacy check: if viewing someone else's inventory
         if target_id != interaction.user.id and target_db.is_inventory_private:
             # Check if requester is a bot admin (they bypass privacy)
             is_requester_admin = await self.bot.is_admin(interaction.user)
             if not is_requester_admin:
-                return await interaction.response.send_message(
+                return await interaction.followup.send(
                     f"🔒 **{target_name}**'s inventory is set to private.", ephemeral=True
                 )
 
@@ -818,8 +823,10 @@ class SettingsCardSelect(discord.ui.Select):
                     trader_name = member.display_name
             traded_by_str = f"\nTraded by: {trader_name}"
         
-        total_atk_pct = card.template.attack_boost_pct + tier_boost
-        total_def_pct = card.template.defence_boost_pct + tier_boost
+        atk_boost = getattr(card.template, "attack_boost_pct", 0) or 0
+        def_boost = getattr(card.template, "defence_boost_pct", 0) or 0
+        total_atk_pct = atk_boost + tier_boost
+        total_def_pct = def_boost + tier_boost
 
         atk_val = card.template.attack_stat
         if total_atk_pct > 0:

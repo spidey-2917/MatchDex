@@ -85,7 +85,13 @@ def load_lineup_cards(uid):
 def get_logo_bonus(uid):
     try:
         ul = UserLogo.objects.select_related("logo").get(owner__discord_id=uid)
-        return ul.logo.bonus
+        rarity_bonus = {
+            "Regular": 0,
+            "Rare": 1,
+            "Legends": 2,
+            "GOAT": 3,
+        }.get(ul.logo.rarity, 0)
+        return (ul.logo.bonus or 1) + rarity_bonus
     except UserLogo.DoesNotExist:
         return 0
 

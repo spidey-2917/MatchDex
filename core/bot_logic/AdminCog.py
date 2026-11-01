@@ -330,13 +330,13 @@ class AdminCog(commands.Cog, name="Admin"):
     @spawn_group.command(name="manager", description="Spawn a catchable Manager in this channel")
     @app_commands.describe(
         manager_name="Manager name to spawn (or leave empty for random)",
-        rarity="Filter random spawn by manager rarity (optional)"
+        rarity="Filter random spawn by manager sub-rarity (optional)"
     )
     @app_commands.choices(rarity=[
-        app_commands.Choice(name="Rare", value="Rare"),
-        app_commands.Choice(name="Epic", value="Epic"),
-        app_commands.Choice(name="Legendary", value="Legendary"),
-        app_commands.Choice(name="World-Class", value="World-Class"),
+        app_commands.Choice(name="Regular (50%)", value="Regular"),
+        app_commands.Choice(name="Rare (30%)", value="Rare"),
+        app_commands.Choice(name="Legends (15%)", value="Legends"),
+        app_commands.Choice(name="GOAT (5%)", value="GOAT"),
     ])
     @app_commands.autocomplete(manager_name=manager_name_autocomplete)
     async def spawn_manager(
@@ -380,13 +380,25 @@ class AdminCog(commands.Cog, name="Admin"):
         await interaction.response.send_message(
             f"Spawning manager **{manager.name}** ({manager.rarity})…", ephemeral=True
         )
-        await spawning_cog._spawn_manager(interaction.channel, manager=manager)
+        await spawning_cog._spawn_manager(interaction.channel, manager=manager, rarity=rarity)
 
     @spawn_group.command(name="logo", description="Spawn a catchable Club Crest / Logo in this channel")
-    @app_commands.describe(logo_name="Logo/club name to spawn (or leave empty for random)")
+    @app_commands.describe(
+        logo_name="Logo/club name to spawn (or leave empty for random)",
+        rarity="Filter random spawn by logo sub-rarity (optional)",
+    )
+    @app_commands.choices(rarity=[
+        app_commands.Choice(name="Regular (50%)", value="Regular"),
+        app_commands.Choice(name="Rare (30%)", value="Rare"),
+        app_commands.Choice(name="Legends (15%)", value="Legends"),
+        app_commands.Choice(name="GOAT (5%)", value="GOAT"),
+    ])
     @app_commands.autocomplete(logo_name=logo_name_autocomplete)
     async def spawn_logo(
-        self, interaction: discord.Interaction, logo_name: str | None = None
+        self,
+        interaction: discord.Interaction,
+        logo_name: str | None = None,
+        rarity: str | None = None,
     ):
         if not await self.check_admin(interaction):
             return
@@ -400,10 +412,17 @@ class AdminCog(commands.Cog, name="Admin"):
                 )
                 return
         else:
-            logo = await sync_to_async(lambda: Logo.objects.order_by("?").first())()
+            @sync_to_async
+            def get_logo():
+                qs = Logo.objects.all()
+                if rarity:
+                    qs = qs.filter(rarity__iexact=rarity)
+                return qs.order_by("?").first()
+            logo = await get_logo()
             if not logo:
+                filter_str = f" with rarity '{rarity}'" if rarity else ""
                 await interaction.response.send_message(
-                    "❌ No Logos exist in the database yet. Add logos via the Django admin panel.",
+                    f"❌ No Logos exist{filter_str} in the database yet. Add logos via the Django admin panel.",
                     ephemeral=True
                 )
                 return
@@ -414,9 +433,9 @@ class AdminCog(commands.Cog, name="Admin"):
             return
 
         await interaction.response.send_message(
-            f"Spawning logo **{logo.name}**…", ephemeral=True
+            f"Spawning logo **{logo.name}** ({logo.rarity})…", ephemeral=True
         )
-        await spawning_cog._spawn_logo(interaction.channel, logo=logo)
+        await spawning_cog._spawn_logo(interaction.channel, logo=logo, rarity=rarity)
 
     # ══════════════════════════════════════════════════════════
     #  /admin give — replaces legacy /give + /give_full

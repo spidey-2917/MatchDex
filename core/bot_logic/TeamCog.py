@@ -910,10 +910,18 @@ class TeamCog(commands.Cog, name="Teams"):
 
         ownership_badge = " ⭐ **Equipped Active Coach**" if is_equipped else (" ✅ **In Your Locker**" if is_owned else " 🔒 **Not In Your Locker**")
 
+        rarity_colors = {
+            "Regular": discord.Color.light_grey(),
+            "Rare": discord.Color.blue(),
+            "Legends": discord.Color.gold(),
+            "GOAT": discord.Color.red(),
+        }
+        mgr_color = rarity_colors.get(mgr.rarity, discord.Color.gold())
+
         embed = discord.Embed(
             title=f"👔 Manager: {mgr.name}",
             description=f"**Nationality:** {mgr.nationality or 'Unknown'} | **Rarity:** {mgr.rarity}\n**Status:**{ownership_badge}",
-            color=discord.Color.gold() if mgr.rarity in ("Legendary", "World-Class") else discord.Color.blue()
+            color=mgr_color
         )
         embed.set_image(url=f"attachment://manager_{mgr.id}.png")
 
@@ -976,10 +984,18 @@ class TeamCog(commands.Cog, name="Teams"):
                 ephemeral=True
             )
 
+        rarity_colors = {
+            "GOAT": discord.Color.from_rgb(255, 59, 48),       # Red
+            "Legends": discord.Color.gold(),                     # Gold
+            "Rare": discord.Color.blue(),                        # Blue
+            "Regular": discord.Color.light_grey(),               # Light Grey
+        }
+        color = rarity_colors.get(logo.rarity, discord.Color.green())
+
         embed = discord.Embed(
             title=f"🛡️ Equipped Logo: {logo.name}",
             description=f"**Club:** {logo.club or 'Custom'} | **Rarity:** {logo.rarity}\n**Bonus:** +{logo.boost_val} to team stats",
-            color=discord.Color.green()
+            color=color
         )
 
         file = None

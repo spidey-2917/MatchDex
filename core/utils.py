@@ -480,12 +480,12 @@ def generate_manager_image(manager):
     if img is None:
         width, height = 400, 600
         rarity_colors = {
+            "Regular": (160, 170, 185),
             "Rare": (30, 144, 255),
-            "Epic": (138, 43, 226),
-            "Legendary": (255, 215, 0),
-            "World-Class": (220, 20, 60),
+            "Legends": (255, 215, 0),
+            "GOAT": (220, 20, 60),
         }
-        color = rarity_colors.get(manager.rarity, (70, 130, 180))
+        color = rarity_colors.get(manager.rarity, (160, 170, 185))
         img = Image.new("RGB", (width, height), color=(20, 24, 30))
         draw = ImageDraw.Draw(img)
 
@@ -553,11 +553,12 @@ def generate_logo_image(logo):
     if img is None:
         width, height = 400, 600
         rarity_colors = {
+            "Regular": (160, 170, 185),
             "Rare": (30, 144, 255),
-            "Epic": (138, 43, 226),
-            "Legendary": (255, 215, 0),
+            "Legends": (255, 215, 0),
+            "GOAT": (220, 20, 60),
         }
-        color = rarity_colors.get(logo.rarity, (138, 43, 226))
+        color = rarity_colors.get(logo.rarity, (160, 170, 185))
         img = Image.new("RGB", (width, height), color=(18, 22, 28))
         draw = ImageDraw.Draw(img)
 
@@ -764,6 +765,10 @@ class CardListView(discord.ui.View):
                 order = ["-caught_at"]
                 if self.reverse: order = ["caught_at"]
                 qs = qs.order_by(*order)
+            else:
+                order = ["-template__ovr", "-caught_at"]
+                if self.reverse: order = ["template__ovr", "caught_at"]
+                qs = qs.order_by(*order)
             
             self.total_cards = qs.count()
             start = self.page * self.page_size
@@ -791,8 +796,12 @@ class CardListView(discord.ui.View):
         
         if not self.current_cards and self.page == 0:
             msg = "You have no cards!"
+            if getattr(self, "event", None):
+                msg = f"You have no cards from the **{self.event}** event!"
+            elif self.sort_by == "refractor":
+                msg = "You have no refractor cards in your inventory!"
             if interaction.response.is_done():
-                await interaction.followup.send(msg, ephemeral=self.ephemeral)
+                await interaction.edit_original_response(content=msg, embed=None, view=None)
             else:
                 await interaction.response.send_message(msg, ephemeral=self.ephemeral)
             return
@@ -838,8 +847,9 @@ class CardListView(discord.ui.View):
         # Row 2+: Selection
         self.add_selection_menu(self.current_cards)
 
+        username_str = getattr(self.user_db, "username", None) or f"User #{getattr(self.user_db, 'discord_id', 'Unknown')}"
         embed = discord.Embed(
-            title=f"🃏 {self.user_db.username}'s Card Inventory",
+            title=f"🃏 {username_str}'s Card Inventory",
             description=f"**Page {self.page + 1} of {max(1, total_pages)}** • Total Cards: **{self.total_cards}**\n*Select a card from the dropdown below to view full details.*",
             color=discord.Color.blue()
         )
@@ -853,7 +863,23 @@ class CardListView(discord.ui.View):
             lines.append(f"`#{c.card_id}` **{c.template.display_name}** ({ovr} {pos}) • {c.template.rarity}{tier_badge}{ref_badge}")
 
         if lines:
-            embed.add_field(name="Cards on this page", value="\n".join(lines), inline=False)
+            chunks = []
+            curr_chunk = []
+            curr_len = 0
+            for line in lines:
+                if curr_len + len(line) + 1 > 1000:
+                    chunks.append("\n".join(curr_chunk))
+                    curr_chunk = [line]
+                    curr_len = len(line)
+                else:
+                    curr_chunk.append(line)
+                    curr_len += len(line) + 1
+            if curr_chunk:
+                chunks.append("\n".join(curr_chunk))
+
+            for i, chunk in enumerate(chunks):
+                field_name = "Cards on this page" if i == 0 else f"Cards on this page (cont. {i+1})"
+                embed.add_field(name=field_name, value=chunk, inline=False)
 
         if interaction.response.is_done():
             await interaction.edit_original_response(content=None, embed=embed, view=self)

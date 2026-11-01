@@ -477,11 +477,15 @@ class DroppedCatchModal(discord.ui.Modal, title="Catch Dropped Card"):
 
             await update_objective_progress(catcher, "claim_card")
 
-            dropper_name = (
+            dropper_raw = (
                 getattr(self.view_instance, "dropper_name", None)
                 or getattr(self.view_instance.dropper, "username", None)
-                or f"User #{getattr(self.view_instance.dropper, 'discord_id', 'Unknown')}"
             )
+            if not dropper_raw or str(dropper_raw).strip().lower() in ("none", "null", "unknown", ""):
+                d_id = getattr(self.view_instance.dropper, "discord_id", None)
+                dropper_name = f"<@{d_id}>" if d_id else "Someone"
+            else:
+                dropper_name = str(dropper_raw)
 
             ref_note = ""
             if updated_card.refractor and updated_card.refractor != "NONE":
@@ -515,7 +519,11 @@ class DroppedCatchView(discord.ui.View):
         super().__init__(timeout=300)
         self.user_card = user_card
         self.dropper = dropper
-        self.dropper_name = dropper_name or getattr(dropper, "username", None) or str(getattr(dropper, "discord_id", "Unknown"))
+        dn = dropper_name or getattr(dropper, "username", None)
+        if not dn or str(dn).strip().lower() in ("none", "null", "unknown", ""):
+            d_id = getattr(dropper, "discord_id", None)
+            dn = f"<@{d_id}>" if d_id else "Someone"
+        self.dropper_name = str(dn)
         self.cog = cog
         self.caught = False
         self.message = None
@@ -680,22 +688,28 @@ class SpawningCog(commands.Cog, name="Spawning"):
                     if match_qs.exists():
                         return match_qs.order_by("?").first()
 
-                # Weighted roll by manager rarity
-                available_rarities = list(qs.values_list("rarity", flat=True).distinct())
-                weights_map = {"Rare": 55, "Epic": 30, "Legendary": 12, "World-Class": 3}
-                weights = [weights_map.get(r, 10) for r in available_rarities]
-                chosen_rarity = random.choices(available_rarities, weights=weights, k=1)[0]
-                return qs.filter(rarity=chosen_rarity).order_by("?").first()
+                # Roll weighted sub-rarity: Regular 50%, Rare 30%, Legends 15%, GOAT 5%
+                target_rarity = random.choices(
+                    ["Regular", "Rare", "Legends", "GOAT"],
+                    weights=[50, 30, 15, 5],
+                    k=1
+                )[0]
+                matched = qs.filter(rarity__iexact=target_rarity)
+                if matched.exists():
+                    return matched.order_by("?").first()
+
+                # Fallback to any available manager
+                return qs.order_by("?").first()
 
             manager = await pick_manager()
         if not manager:
             return False
 
         rarity_colors = {
+            "Regular": discord.Color.light_grey(),
             "Rare": discord.Color.blue(),
-            "Epic": discord.Color.purple(),
-            "Legendary": discord.Color.gold(),
-            "World-Class": discord.Color.red(),
+            "Legends": discord.Color.gold(),
+            "GOAT": discord.Color.red(),
         }
         mgr_color = rarity_colors.get(manager.rarity, discord.Color.gold())
 
@@ -750,24 +764,48 @@ class SpawningCog(commands.Cog, name="Spawning"):
             log.error(f"Failed to send manager spawn message: {e}")
             return False
 
-    async def _spawn_logo(self, channel: discord.TextChannel, logo=None) -> bool:
-        """Spawn a catchable Club Crest / Logo. Returns True if spawned successfully."""
+    async def _spawn_logo(self, channel: discord.TextChannel, logo=None, rarity: str | None = None) -> bool:
+        """Spawn a catchable Club Crest / Logo with sub-rarity weighting (Regular 50%, Rare 30%, Legends 15%, GOAT 5%)."""
         if not channel or not getattr(channel, "guild", None):
             return False
         if await self.bot.is_guild_blacklisted(channel.guild.id):
             return False
 
         if not logo:
-            logo = await sync_to_async(lambda: Logo.objects.order_by("?").first())()
+            @sync_to_async
+            def pick_logo():
+                qs = Logo.objects.all()
+                if not qs.exists():
+                    return None
+                if rarity:
+                    match_qs = qs.filter(rarity__iexact=rarity)
+                    if match_qs.exists():
+                        return match_qs.order_by("?").first()
+
+                # Roll weighted sub-rarity: Regular 50%, Rare 30%, Legends 15%, GOAT 5%
+                target_rarity = random.choices(
+                    ["Regular", "Rare", "Legends", "GOAT"],
+                    weights=[50, 30, 15, 5],
+                    k=1
+                )[0]
+                matched = qs.filter(rarity__iexact=target_rarity)
+                if matched.exists():
+                    return matched.order_by("?").first()
+
+                # Fallback to any available logo
+                return qs.order_by("?").first()
+
+            logo = await pick_logo()
         if not logo:
             return False
 
         rarity_colors = {
+            "Regular": discord.Color.light_grey(),
             "Rare": discord.Color.blue(),
-            "Epic": discord.Color.purple(),
-            "Legendary": discord.Color.gold(),
+            "Legends": discord.Color.gold(),
+            "GOAT": discord.Color.red(),
         }
-        logo_color = rarity_colors.get(logo.rarity, discord.Color.purple())
+        logo_color = rarity_colors.get(logo.rarity, discord.Color.gold())
 
         embed = discord.Embed(
             title=f"🛡️ A {logo.rarity} Club Crest has appeared!",

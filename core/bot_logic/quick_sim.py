@@ -271,13 +271,13 @@ def calculate_manager_boosts(manager, formation: str, tactic: str):
     if not manager:
         return att_mult, def_mult, clearance_bonus, primary_type
 
-    # Manager rarity scale multiplier (World-Class / Legendary give significantly bigger boosts!)
-    rarity = getattr(manager, "rarity", "Legendary") or "Legendary"
+    # Manager rarity scale multiplier (GOAT / Legends give significantly bigger boosts!)
+    rarity = getattr(manager, "rarity", "Regular") or "Regular"
     rarity_multipliers = {
-        "World-Class": 1.5,
-        "Legendary": 1.25,
-        "Epic": 1.0,
-        "Rare": 0.8,
+        "GOAT": 1.5,
+        "Legends": 1.25,
+        "Rare": 1.0,
+        "Regular": 0.8,
     }
     rarity_mult = rarity_multipliers.get(rarity, 1.0)
 

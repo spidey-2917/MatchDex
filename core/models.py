@@ -217,7 +217,12 @@ class FavouriteCard(TypedModel):
 
 
 class Logo(TypedModel):
-    RARITIES = [("RARE", "Rare"), ("EPIC", "Epic"), ("LEGENDARY", "Legendary")]
+    RARITIES = [
+        ("Regular", "Regular"),
+        ("Rare", "Rare"),
+        ("Legends", "Legends"),
+        ("GOAT", "GOAT"),
+    ]
     BOOST_CHOICES = [
         ("FLAT", "Flat Stat Boost"),
         ("ATTACK", "Attack Boost"),
@@ -227,7 +232,7 @@ class Logo(TypedModel):
     ]
     name = models.CharField(max_length=100)
     club = models.CharField(max_length=100, blank=True, null=True)
-    rarity = models.CharField(max_length=20, default="Rare")
+    rarity = models.CharField(max_length=20, choices=RARITIES, default="Regular")
     bonus = models.IntegerField(default=1)  # For backwards compatibility with duel matches
     boost_type = models.CharField(max_length=20, choices=BOOST_CHOICES, default="FLAT")
     boost_val = models.IntegerField(default=2, help_text="Percentage or flat bonus")
@@ -883,14 +888,14 @@ class TradeObjectiveLog(TypedModel):
 
 class Manager(TypedModel):
     RARITY_CHOICES = [
+        ("Regular", "Regular"),
         ("Rare", "Rare"),
-        ("Epic", "Epic"),
-        ("Legendary", "Legendary"),
-        ("World-Class", "World-Class"),
+        ("Legends", "Legends"),
+        ("GOAT", "GOAT"),
     ]
     name = models.CharField(max_length=100)
     nationality = models.CharField(max_length=100, blank=True, null=True)
-    rarity = models.CharField(max_length=20, choices=RARITY_CHOICES, default="Legendary")
+    rarity = models.CharField(max_length=20, choices=RARITY_CHOICES, default="Regular")
     image = models.ImageField(upload_to="managers/", blank=True, null=True)
 
     preferred_formation = models.CharField(
