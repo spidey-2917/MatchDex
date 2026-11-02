@@ -265,8 +265,8 @@ class FavouriteCardAdmin(admin.ModelAdmin):
 
 @admin.register(Logo)
 class LogoAdmin(admin.ModelAdmin):
-    list_display: Sequence[str] = ("name", "club", "rarity", "boost_type", "boost_val", "preferred_tactic")
-    list_filter: Sequence[str] = ("rarity", "boost_type", "preferred_tactic")
+    list_display: Sequence[str] = ("name", "club", "rarity", "category", "boost_type", "boost_val", "preferred_tactic")
+    list_filter: Sequence[str] = ("category", "rarity", "boost_type", "preferred_tactic")
     search_fields: Sequence[str] = ("name", "club")
 
 
@@ -456,11 +456,11 @@ class TradeObjectiveLogAdmin(admin.ModelAdmin):
 @admin.register(Manager)
 class ManagerAdmin(admin.ModelAdmin):
     list_display = (
-        "name", "nationality", "rarity",
+        "name", "nationality", "rarity", "category",
         "preferred_formation", "formation_boost_type", "formation_boost_pct",
         "preferred_tactic", "tactic_boost_type", "tactic_boost_pct",
     )
-    list_filter = ("preferred_formation", "preferred_tactic", "formation_boost_type", "rarity")
+    list_filter = ("category", "preferred_formation", "preferred_tactic", "formation_boost_type", "rarity")
     search_fields = ("name", "nationality")
 
 

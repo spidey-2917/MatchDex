@@ -240,8 +240,9 @@ class SignManagerModal(discord.ui.Modal, title="Sign Manager"):
 
             await update_objective_progress(user, "claim_card")
 
+            prem_tag = " • ⭐ **PREMIUM**" if getattr(self.manager, "category", "DEFAULT") == "PREMIUM" else ""
             await interaction.response.send_message(
-                f"👔 {interaction.user.mention} successfully signed **{self.manager.name}** ({self.manager.rarity})!{eq_text}"
+                f"👔 {interaction.user.mention} successfully signed **{self.manager.name}** ({self.manager.rarity}{prem_tag})!{eq_text}"
             )
             if interaction.message:
                 await interaction.message.edit(view=None)
@@ -348,8 +349,9 @@ class ClaimLogoModal(discord.ui.Modal, title="Claim Club Crest"):
 
             await update_objective_progress(user, "claim_card")
 
+            prem_tag = " • ⭐ **PREMIUM**" if getattr(self.logo, "category", "DEFAULT") == "PREMIUM" else ""
             await interaction.response.send_message(
-                f"🛡️ {interaction.user.mention} successfully claimed the **{self.logo.name}** crest!{eq_text}"
+                f"🛡️ {interaction.user.mention} successfully claimed the **{self.logo.name}** crest ({self.logo.rarity}{prem_tag})!{eq_text}"
             )
             if interaction.message:
                 await interaction.message.edit(view=None)
@@ -680,7 +682,8 @@ class SpawningCog(commands.Cog, name="Spawning"):
         if not manager:
             @sync_to_async
             def pick_manager():
-                qs = Manager.objects.all()
+                # Natural spawning excludes PREMIUM category
+                qs = Manager.objects.exclude(category="PREMIUM")
                 if not qs.exists():
                     return None
                 if rarity:
@@ -774,7 +777,8 @@ class SpawningCog(commands.Cog, name="Spawning"):
         if not logo:
             @sync_to_async
             def pick_logo():
-                qs = Logo.objects.all()
+                # Natural spawning excludes PREMIUM category
+                qs = Logo.objects.exclude(category="PREMIUM")
                 if not qs.exists():
                     return None
                 if rarity:

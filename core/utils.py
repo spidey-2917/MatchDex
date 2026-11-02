@@ -504,9 +504,13 @@ def generate_manager_image(manager):
             font_body = ImageFont.load_default()
 
         # Title
-        draw.text((25, 30), "👔 MANAGER", fill=color, font=font_sub)
+        header_text = "👔 ⭐ PREMIUM MANAGER" if getattr(manager, "category", "DEFAULT") == "PREMIUM" else "👔 MANAGER"
+        draw.text((25, 30), header_text, fill=color, font=font_sub)
         draw.text((25, 65), manager.name, fill=(255, 255, 255), font=font_title)
-        draw.text((25, 120), f"Rarity: {manager.rarity.upper()}", fill=color, font=font_sub)
+        rarity_str = f"Rarity: {manager.rarity.upper()}"
+        if getattr(manager, "category", "DEFAULT") == "PREMIUM":
+            rarity_str += " • [PREMIUM]"
+        draw.text((25, 120), rarity_str, fill=color, font=font_sub)
         draw.text((25, 155), f"Nationality: {manager.nationality or 'Unknown'}", fill=(200, 200, 200), font=font_body)
 
         # Inner tactician badge card
@@ -577,10 +581,14 @@ def generate_logo_image(logo):
             font_body = ImageFont.load_default()
 
         # Header
-        draw.text((25, 30), "🛡️ CLUB CREST", fill=color, font=font_sub)
+        header_text = "🛡️ ⭐ PREMIUM CREST" if getattr(logo, "category", "DEFAULT") == "PREMIUM" else "🛡️ CLUB CREST"
+        draw.text((25, 30), header_text, fill=color, font=font_sub)
         club_display = logo.club or logo.name
         draw.text((25, 65), club_display[:22], fill=(255, 255, 255), font=font_title)
-        draw.text((25, 115), f"Rarity: {logo.rarity.upper()}", fill=color, font=font_sub)
+        rarity_str = f"Rarity: {logo.rarity.upper()}"
+        if getattr(logo, "category", "DEFAULT") == "PREMIUM":
+            rarity_str += " • [PREMIUM]"
+        draw.text((25, 115), rarity_str, fill=color, font=font_sub)
 
         # Center Shield Graphic
         shield_box = [60, 165, width - 60, 365]

@@ -312,7 +312,11 @@ class AdminCog(commands.Cog, name="Admin"):
                 qs = qs.filter(name__icontains=current)
             return list(qs[:25])
         managers = await get_managers()
-        return [app_commands.Choice(name=m.name, value=m.name) for m in managers]
+        choices = []
+        for m in managers:
+            prem_tag = " [PREMIUM]" if getattr(m, "category", "DEFAULT") == "PREMIUM" else ""
+            choices.append(app_commands.Choice(name=f"{m.name} ({m.rarity}){prem_tag}"[:100], value=m.name))
+        return choices
 
     async def logo_name_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -325,25 +329,37 @@ class AdminCog(commands.Cog, name="Admin"):
                 qs = qs.filter(name__icontains=current)
             return list(qs[:25])
         logos = await get_logos()
-        return [app_commands.Choice(name=l.name, value=l.name) for l in logos]
+        choices = []
+        for l in logos:
+            prem_tag = " [PREMIUM]" if getattr(l, "category", "DEFAULT") == "PREMIUM" else ""
+            choices.append(app_commands.Choice(name=f"{l.name} ({l.rarity}){prem_tag}"[:100], value=l.name))
+        return choices
 
     @spawn_group.command(name="manager", description="Spawn a catchable Manager in this channel")
     @app_commands.describe(
         manager_name="Manager name to spawn (or leave empty for random)",
-        rarity="Filter random spawn by manager sub-rarity (optional)"
+        rarity="Filter random spawn by manager sub-rarity (optional)",
+        category="Filter random spawn by category: Default or Premium (optional)"
     )
-    @app_commands.choices(rarity=[
-        app_commands.Choice(name="Regular (50%)", value="Regular"),
-        app_commands.Choice(name="Rare (30%)", value="Rare"),
-        app_commands.Choice(name="Legends (15%)", value="Legends"),
-        app_commands.Choice(name="GOAT (5%)", value="GOAT"),
-    ])
+    @app_commands.choices(
+        rarity=[
+            app_commands.Choice(name="Regular (50%)", value="Regular"),
+            app_commands.Choice(name="Rare (30%)", value="Rare"),
+            app_commands.Choice(name="Legends (15%)", value="Legends"),
+            app_commands.Choice(name="GOAT (5%)", value="GOAT"),
+        ],
+        category=[
+            app_commands.Choice(name="Default (Standard)", value="DEFAULT"),
+            app_commands.Choice(name="Premium (Unspawnable)", value="PREMIUM"),
+        ]
+    )
     @app_commands.autocomplete(manager_name=manager_name_autocomplete)
     async def spawn_manager(
         self,
         interaction: discord.Interaction,
         manager_name: str | None = None,
         rarity: str | None = None,
+        category: str | None = None,
     ):
         if not await self.check_admin(interaction):
             return
@@ -360,12 +376,20 @@ class AdminCog(commands.Cog, name="Admin"):
             @sync_to_async
             def get_mgr():
                 qs = Manager.objects.all()
+                if category:
+                    qs = qs.filter(category=category)
+                else:
+                    # By default without category, don't randomly spawn premium unless requested
+                    qs = qs.exclude(category="PREMIUM")
                 if rarity:
                     qs = qs.filter(rarity__iexact=rarity)
                 return qs.order_by("?").first()
             manager = await get_mgr()
             if not manager:
-                filter_str = f" with rarity '{rarity}'" if rarity else ""
+                filter_parts = []
+                if rarity: filter_parts.append(f"rarity '{rarity}'")
+                if category: filter_parts.append(f"category '{category}'")
+                filter_str = f" with {', '.join(filter_parts)}" if filter_parts else ""
                 await interaction.response.send_message(
                     f"❌ No Managers exist{filter_str} in the database yet. Add managers via the Django admin panel.",
                     ephemeral=True
@@ -377,8 +401,9 @@ class AdminCog(commands.Cog, name="Admin"):
             await interaction.response.send_message("❌ Spawning system unavailable.", ephemeral=True)
             return
 
+        prem_str = " • ⭐ PREMIUM" if getattr(manager, "category", "DEFAULT") == "PREMIUM" else ""
         await interaction.response.send_message(
-            f"Spawning manager **{manager.name}** ({manager.rarity})…", ephemeral=True
+            f"Spawning manager **{manager.name}** ({manager.rarity}{prem_str})…", ephemeral=True
         )
         await spawning_cog._spawn_manager(interaction.channel, manager=manager, rarity=rarity)
 
@@ -386,19 +411,27 @@ class AdminCog(commands.Cog, name="Admin"):
     @app_commands.describe(
         logo_name="Logo/club name to spawn (or leave empty for random)",
         rarity="Filter random spawn by logo sub-rarity (optional)",
+        category="Filter random spawn by category: Default or Premium (optional)"
     )
-    @app_commands.choices(rarity=[
-        app_commands.Choice(name="Regular (50%)", value="Regular"),
-        app_commands.Choice(name="Rare (30%)", value="Rare"),
-        app_commands.Choice(name="Legends (15%)", value="Legends"),
-        app_commands.Choice(name="GOAT (5%)", value="GOAT"),
-    ])
+    @app_commands.choices(
+        rarity=[
+            app_commands.Choice(name="Regular (50%)", value="Regular"),
+            app_commands.Choice(name="Rare (30%)", value="Rare"),
+            app_commands.Choice(name="Legends (15%)", value="Legends"),
+            app_commands.Choice(name="GOAT (5%)", value="GOAT"),
+        ],
+        category=[
+            app_commands.Choice(name="Default (Standard)", value="DEFAULT"),
+            app_commands.Choice(name="Premium (Unspawnable)", value="PREMIUM"),
+        ]
+    )
     @app_commands.autocomplete(logo_name=logo_name_autocomplete)
     async def spawn_logo(
         self,
         interaction: discord.Interaction,
         logo_name: str | None = None,
         rarity: str | None = None,
+        category: str | None = None,
     ):
         if not await self.check_admin(interaction):
             return
@@ -415,12 +448,20 @@ class AdminCog(commands.Cog, name="Admin"):
             @sync_to_async
             def get_logo():
                 qs = Logo.objects.all()
+                if category:
+                    qs = qs.filter(category=category)
+                else:
+                    # By default without category, don't randomly spawn premium unless requested
+                    qs = qs.exclude(category="PREMIUM")
                 if rarity:
                     qs = qs.filter(rarity__iexact=rarity)
                 return qs.order_by("?").first()
             logo = await get_logo()
             if not logo:
-                filter_str = f" with rarity '{rarity}'" if rarity else ""
+                filter_parts = []
+                if rarity: filter_parts.append(f"rarity '{rarity}'")
+                if category: filter_parts.append(f"category '{category}'")
+                filter_str = f" with {', '.join(filter_parts)}" if filter_parts else ""
                 await interaction.response.send_message(
                     f"❌ No Logos exist{filter_str} in the database yet. Add logos via the Django admin panel.",
                     ephemeral=True
@@ -432,10 +473,93 @@ class AdminCog(commands.Cog, name="Admin"):
             await interaction.response.send_message("❌ Spawning system unavailable.", ephemeral=True)
             return
 
+        prem_str = " • ⭐ PREMIUM" if getattr(logo, "category", "DEFAULT") == "PREMIUM" else ""
         await interaction.response.send_message(
-            f"Spawning logo **{logo.name}** ({logo.rarity})…", ephemeral=True
+            f"Spawning logo **{logo.name}** ({logo.rarity}{prem_str})…", ephemeral=True
         )
         await spawning_cog._spawn_logo(interaction.channel, logo=logo, rarity=rarity)
+
+    @admin_group.command(name="give_manager", description="Give a manager directly to a user's collection")
+    @app_commands.describe(
+        user="User to receive the manager",
+        manager_name="Manager name to grant",
+    )
+    @app_commands.autocomplete(manager_name=manager_name_autocomplete)
+    async def give_manager(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        manager_name: str,
+    ):
+        if not await self.check_admin(interaction):
+            return
+
+        from core.models import Manager, UserOwnedManager, UserManager, DiscordUser
+        manager = await Manager.objects.filter(name__icontains=manager_name).afirst()
+        if not manager:
+            return await interaction.response.send_message(
+                f"❌ Manager '{manager_name}' not found.", ephemeral=True
+            )
+
+        db_user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=user.id, defaults={"username": user.name}
+        )
+        owned, created = await UserOwnedManager.objects.aget_or_create(
+            user=db_user, manager=manager
+        )
+        has_eq = await UserManager.objects.filter(owner=db_user).aexists()
+        eq_text = ""
+        if not has_eq:
+            await UserManager.objects.acreate(owner=db_user, manager=manager)
+            eq_text = " (Auto-equipped as active manager!)"
+
+        prem_str = " • ⭐ PREMIUM" if getattr(manager, "category", "DEFAULT") == "PREMIUM" else ""
+        action_word = "Added" if created else "Already owned"
+        await interaction.response.send_message(
+            f"✅ {action_word}: Manager **{manager.name}** ({manager.rarity}{prem_str}) granted to {user.mention}!{eq_text}",
+            ephemeral=False
+        )
+
+    @admin_group.command(name="give_logo", description="Give a club crest / logo directly to a user's collection")
+    @app_commands.describe(
+        user="User to receive the crest/logo",
+        logo_name="Logo/club name to grant",
+    )
+    @app_commands.autocomplete(logo_name=logo_name_autocomplete)
+    async def give_logo(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        logo_name: str,
+    ):
+        if not await self.check_admin(interaction):
+            return
+
+        from core.models import Logo, UserOwnedLogo, UserLogo, DiscordUser
+        logo = await Logo.objects.filter(name__icontains=logo_name).afirst()
+        if not logo:
+            return await interaction.response.send_message(
+                f"❌ Logo '{logo_name}' not found.", ephemeral=True
+            )
+
+        db_user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=user.id, defaults={"username": user.name}
+        )
+        owned, created = await UserOwnedLogo.objects.aget_or_create(
+            user=db_user, logo=logo
+        )
+        has_eq = await UserLogo.objects.filter(owner=db_user).aexists()
+        eq_text = ""
+        if not has_eq:
+            await UserLogo.objects.acreate(owner=db_user, logo=logo)
+            eq_text = " (Auto-equipped as active crest!)"
+
+        prem_str = " • ⭐ PREMIUM" if getattr(logo, "category", "DEFAULT") == "PREMIUM" else ""
+        action_word = "Added" if created else "Already owned"
+        await interaction.response.send_message(
+            f"✅ {action_word}: Logo **{logo.name}** ({logo.rarity}{prem_str}) granted to {user.mention}!{eq_text}",
+            ephemeral=False
+        )
 
     # ══════════════════════════════════════════════════════════
     #  /admin give — replaces legacy /give + /give_full

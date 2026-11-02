@@ -830,8 +830,9 @@ class TeamCog(commands.Cog, name="Teams"):
         for item in owned:
             m = item.manager
             tag = " ⭐ **[EQUIPPED]**" if m.id == eq_id else ""
+            prem_tag = " `[PREMIUM]`" if getattr(m, "category", "DEFAULT") == "PREMIUM" else ""
             lines.append(
-                f"• **{m.name}** ({m.rarity}){tag}\n"
+                f"• **{m.name}** ({m.rarity}){prem_tag}{tag}\n"
                 f"  Formation: `{m.preferred_formation}` (+{m.formation_boost_pct}% {m.formation_boost_type})"
             )
 
@@ -918,9 +919,10 @@ class TeamCog(commands.Cog, name="Teams"):
         }
         mgr_color = rarity_colors.get(mgr.rarity, discord.Color.gold())
 
+        prem_desc = " • ⭐ **PREMIUM**" if getattr(mgr, "category", "DEFAULT") == "PREMIUM" else ""
         embed = discord.Embed(
             title=f"👔 Manager: {mgr.name}",
-            description=f"**Nationality:** {mgr.nationality or 'Unknown'} | **Rarity:** {mgr.rarity}\n**Status:**{ownership_badge}",
+            description=f"**Nationality:** {mgr.nationality or 'Unknown'} | **Rarity:** {mgr.rarity}{prem_desc}\n**Status:**{ownership_badge}",
             color=mgr_color
         )
         embed.set_image(url=f"attachment://manager_{mgr.id}.png")
@@ -992,9 +994,10 @@ class TeamCog(commands.Cog, name="Teams"):
         }
         color = rarity_colors.get(logo.rarity, discord.Color.green())
 
+        prem_desc = " • ⭐ **PREMIUM**" if getattr(logo, "category", "DEFAULT") == "PREMIUM" else ""
         embed = discord.Embed(
             title=f"🛡️ Equipped Logo: {logo.name}",
-            description=f"**Club:** {logo.club or 'Custom'} | **Rarity:** {logo.rarity}\n**Bonus:** +{logo.boost_val} to team stats",
+            description=f"**Club:** {logo.club or 'Custom'} | **Rarity:** {logo.rarity}{prem_desc}\n**Bonus:** +{logo.boost_val} to team stats",
             color=color
         )
 
@@ -1034,7 +1037,9 @@ class TeamCog(commands.Cog, name="Teams"):
             )
 
         lines = [
-            f"• **{item.logo.name}** (+{item.logo.boost_val} {item.logo.rarity})" + (" ⭐ **[EQUIPPED]**" if item.logo.id == eq_id else "")
+            f"• **{item.logo.name}** (+{item.logo.boost_val} {item.logo.rarity})"
+            + (" `[PREMIUM]`" if getattr(item.logo, "category", "DEFAULT") == "PREMIUM" else "")
+            + (" ⭐ **[EQUIPPED]**" if item.logo.id == eq_id else "")
             for item in owned
         ]
         embed = discord.Embed(

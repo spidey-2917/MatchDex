@@ -223,6 +223,10 @@ class Logo(TypedModel):
         ("Legends", "Legends"),
         ("GOAT", "GOAT"),
     ]
+    CATEGORY_CHOICES = [
+        ("DEFAULT", "Default"),
+        ("PREMIUM", "Premium"),
+    ]
     BOOST_CHOICES = [
         ("FLAT", "Flat Stat Boost"),
         ("ATTACK", "Attack Boost"),
@@ -233,14 +237,20 @@ class Logo(TypedModel):
     name = models.CharField(max_length=100)
     club = models.CharField(max_length=100, blank=True, null=True)
     rarity = models.CharField(max_length=20, choices=RARITIES, default="Regular")
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default="DEFAULT")
     bonus = models.IntegerField(default=1)  # For backwards compatibility with duel matches
     boost_type = models.CharField(max_length=20, choices=BOOST_CHOICES, default="FLAT")
     boost_val = models.IntegerField(default=2, help_text="Percentage or flat bonus")
     preferred_tactic = models.CharField(max_length=20, default="ALL", help_text="Tactic that activates logo boost or ALL")
     image = models.ImageField(upload_to="logos/", blank=True, null=True)
 
+    @property
+    def is_premium(self):
+        return self.category == "PREMIUM"
+
     def __str__(self):
-        return f"{self.name} ({self.rarity})"
+        prem = " [PREMIUM]" if self.category == "PREMIUM" else ""
+        return f"{self.name} ({self.rarity}){prem}"
 
 
 class UserOwnedLogo(TypedModel):
@@ -893,9 +903,14 @@ class Manager(TypedModel):
         ("Legends", "Legends"),
         ("GOAT", "GOAT"),
     ]
+    CATEGORY_CHOICES = [
+        ("DEFAULT", "Default"),
+        ("PREMIUM", "Premium"),
+    ]
     name = models.CharField(max_length=100)
     nationality = models.CharField(max_length=100, blank=True, null=True)
     rarity = models.CharField(max_length=20, choices=RARITY_CHOICES, default="Regular")
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default="DEFAULT")
     image = models.ImageField(upload_to="managers/", blank=True, null=True)
 
     preferred_formation = models.CharField(
@@ -940,8 +955,13 @@ class Manager(TypedModel):
         default=0, help_text="Percentage boost when tactic matches"
     )
 
+    @property
+    def is_premium(self):
+        return self.category == "PREMIUM"
+
     def __str__(self):
-        return f"{self.name} ({self.preferred_formation})"
+        prem = " [PREMIUM]" if self.category == "PREMIUM" else ""
+        return f"{self.name} ({self.rarity}){prem}"
 
 
 class UserOwnedManager(TypedModel):

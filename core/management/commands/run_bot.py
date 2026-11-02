@@ -368,11 +368,19 @@ class MatchdexBot(commands.AutoShardedBot):
         interaction: discord.Interaction,
         error: app_commands.AppCommandError,
     ):
+        # Autocomplete interactions can ONLY accept choices (Type 8), not text messages
+        if interaction.type == discord.InteractionType.autocomplete:
+            log.warning("Autocomplete interaction error for %s: %s", interaction.command, error)
+            return
+
         async def reply(content: str):
-            if interaction.response.is_done():
-                await interaction.followup.send(content, ephemeral=True)
-            else:
-                await interaction.response.send_message(content, ephemeral=True)
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(content, ephemeral=True)
+                else:
+                    await interaction.response.send_message(content, ephemeral=True)
+            except discord.HTTPException as exc:
+                log.warning("Failed to deliver interaction error message: %s", exc)
 
         # Cooldowns
         if isinstance(error, app_commands.CommandOnCooldown):
