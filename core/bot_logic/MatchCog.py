@@ -96,6 +96,15 @@ def get_logo_bonus(uid):
         return 0
 
 
+@sync_to_async
+def get_user_crest(uid):
+    try:
+        ul = UserLogo.objects.select_related("logo").get(owner__discord_id=uid)
+        return ul.logo
+    except UserLogo.DoesNotExist:
+        return None
+
+
 # ════════════════════════════════════════════════════════════════
 #  STEP 1 — Accept challenge
 # ════════════════════════════════════════════════════════════════
@@ -959,6 +968,8 @@ class MatchCog(commands.Cog, name="Matches"):
 
             b1 = await get_logo_bonus(p1.id)
             b2 = await get_logo_bonus(p2.id)
+            p1_logo = await get_user_crest(p1.id)
+            p2_logo = await get_user_crest(p2.id)
             
             from core.models import UserManager
             @sync_to_async
@@ -971,6 +982,23 @@ class MatchCog(commands.Cog, name="Matches"):
                     
             p1_manager = await get_manager(p1.id)
             p2_manager = await get_manager(p2.id)
+
+            def format_mgr_badge(m):
+                if not m:
+                    return "*No Manager*"
+                prem = " ⭐" if getattr(m, "category", "DEFAULT") == "PREMIUM" else ""
+                return f"**{m.name}** ({m.rarity}{prem})"
+
+            def format_crest_badge(lg):
+                if not lg:
+                    return "*No Crest*"
+                prem = " ⭐" if getattr(lg, "category", "DEFAULT") == "PREMIUM" else ""
+                return f"**{lg.name}** (+{lg.boost_val}{prem})"
+
+            p1_mgr_txt = format_mgr_badge(p1_manager)
+            p2_mgr_txt = format_mgr_badge(p2_manager)
+            p1_crest_txt = format_crest_badge(p1_logo)
+            p2_crest_txt = format_crest_badge(p2_logo)
 
             home = build_team_data(
                 p1_cards, p1.display_name, tactic=p1_tactic, logo_bonus=b1,
@@ -1000,6 +1028,8 @@ class MatchCog(commands.Cog, name="Matches"):
                 description=(
                     f"## {p1.display_name} ({p1_trophies} 🏆)  ` 0 - 0 `  ({p2_trophies} 🏆) {p2.display_name}\n"
                     f"> **⏱️ 0' • 1st Half** • **🟢 KICK OFF!**\n\n"
+                    f"🛡️ Crests: {p1_crest_txt} ─ {p2_crest_txt}\n"
+                    f"👔 Managers: {p1_mgr_txt} ─ {p2_mgr_txt}\n"
                     f"📋 Strategies: **{home.display_name}** [{format_tactic_badge(home.tactic)}] ─ [{format_tactic_badge(away.tactic)}] **{away.display_name}**"
                 ),
                 color=discord.Color.gold(),
@@ -1141,6 +1171,8 @@ class MatchCog(commands.Cog, name="Matches"):
                 score_header = (
                     f"## {p1.display_name} ({p1_trophies} 🏆)  ` {running_home} - {running_away} `  ({p2_trophies} 🏆) {p2.display_name}\n"
                     f"> **{status_badge}** • **{phase_title}**\n\n"
+                    f"🛡️ Crests: {p1_crest_txt} ─ {p2_crest_txt}\n"
+                    f"👔 Managers: {p1_mgr_txt} ─ {p2_mgr_txt}\n"
                     f"📋 Strategies: **{home.display_name}** [{format_tactic_badge(home.tactic)}] ─ [{format_tactic_badge(away.tactic)}] **{away.display_name}**"
                 )
                 embed.description = score_header

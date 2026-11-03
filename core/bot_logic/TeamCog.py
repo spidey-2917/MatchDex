@@ -149,6 +149,70 @@ class FormationView(discord.ui.View):
         self.add_item(FormationSelect())
 
 
+class LogoChangeSelect(discord.ui.Select):
+    def __init__(self, user, owned_logos, current_eq_id):
+        options = []
+        for item in owned_logos[:25]:
+            lg = item.logo
+            is_eq = (lg.id == current_eq_id)
+            eq_tag = " ⭐ [Active]" if is_eq else ""
+            prem_tag = " [PREMIUM]" if getattr(lg, "category", "DEFAULT") == "PREMIUM" else ""
+            options.append(
+                discord.SelectOption(
+                    label=f"{lg.name}{prem_tag}{eq_tag}"[:100],
+                    description=f"{lg.club or 'Custom'} • {lg.rarity} • +{lg.boost_val} {lg.boost_type}"[:100],
+                    value=str(lg.id),
+                    default=is_eq,
+                )
+            )
+        super().__init__(placeholder="Select a club crest to equip...", options=options)
+        self.user = user
+
+    async def callback(self, interaction: discord.Interaction):
+        logo_id = int(self.values[0])
+        logo = await Logo.objects.filter(id=logo_id).afirst()
+        if not logo:
+            return await interaction.response.send_message("❌ Logo not found.", ephemeral=True)
+
+        await UserLogo.objects.aupdate_or_create(owner=self.user, defaults={"logo": logo})
+        await interaction.response.send_message(
+            f"✅ Changed active club crest to **{logo.name}** (+{logo.boost_val} {logo.boost_type} bonus)!",
+            ephemeral=True
+        )
+
+
+class ManagerChangeSelect(discord.ui.Select):
+    def __init__(self, user, owned_managers, current_eq_id):
+        options = []
+        for item in owned_managers[:25]:
+            mgr = item.manager
+            is_eq = (mgr.id == current_eq_id)
+            eq_tag = " ⭐ [Active]" if is_eq else ""
+            prem_tag = " [PREMIUM]" if getattr(mgr, "category", "DEFAULT") == "PREMIUM" else ""
+            options.append(
+                discord.SelectOption(
+                    label=f"{mgr.name}{prem_tag}{eq_tag}"[:100],
+                    description=f"{mgr.nationality or 'Coach'} • {mgr.rarity} • {mgr.preferred_formation}"[:100],
+                    value=str(mgr.id),
+                    default=is_eq,
+                )
+            )
+        super().__init__(placeholder="Select a manager to equip...", options=options)
+        self.user = user
+
+    async def callback(self, interaction: discord.Interaction):
+        mgr_id = int(self.values[0])
+        mgr = await Manager.objects.filter(id=mgr_id).afirst()
+        if not mgr:
+            return await interaction.response.send_message("❌ Manager not found.", ephemeral=True)
+
+        await UserManager.objects.aupdate_or_create(owner=self.user, defaults={"manager": mgr})
+        await interaction.response.send_message(
+            f"✅ Changed active manager to **{mgr.name}** ({mgr.rarity})!",
+            ephemeral=True
+        )
+
+
 # ── The Cog ─────────────────────────────────────────────────────
 class TeamCog(commands.Cog, name="Teams"):
     def __init__(self, bot):
@@ -949,6 +1013,24 @@ class TeamCog(commands.Cog, name="Teams"):
         name="logo", description="Manage your club logo and crest boosts"
     )
 
+    async def all_logo_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        @sync_to_async
+        def get_choices():
+            qs = Logo.objects.all()
+            if current:
+                qs = qs.filter(name__icontains=current)
+            return list(qs[:25])
+        items = await get_choices()
+        return [
+            app_commands.Choice(
+                name=f"{l.name} ({l.rarity} | {l.club or 'Custom'})",
+                value=l.name
+            )
+            for l in items
+        ]
+
     async def owned_logo_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
@@ -1077,6 +1159,279 @@ class TeamCog(commands.Cog, name="Teams"):
             f"✅ **{logo.name}** is now your active club crest (+{logo.boost_val} stat bonus)!",
             ephemeral=True
         )
+
+    @logo_group.command(name="show", description="Show detailed card design of a club logo")
+    @app_commands.describe(logo_name="Logo name to inspect (or leave blank for equipped logo)")
+    @app_commands.autocomplete(logo_name=all_logo_autocomplete)
+    async def logo_show(self, interaction: discord.Interaction, logo_name: str | None = None):
+        await interaction.response.defer(ephemeral=False)
+        from core.utils import generate_logo_image
+        import asyncio
+
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def get_logo_data():
+            if logo_name:
+                lg = Logo.objects.filter(name__iexact=logo_name).first() or Logo.objects.filter(name__icontains=logo_name).first()
+            else:
+                ul = UserLogo.objects.select_related("logo").filter(owner=user).first()
+                lg = ul.logo if ul else None
+
+            if not lg:
+                return None, False, False
+
+            is_owned = UserOwnedLogo.objects.filter(user=user, logo=lg).exists()
+            is_equipped = UserLogo.objects.filter(owner=user, logo=lg).exists()
+            return lg, is_owned, is_equipped
+
+        lg, is_owned, is_equipped = await get_logo_data()
+        if not lg:
+            msg = f"❌ Logo **{logo_name}** not found." if logo_name else "❌ You don't have a logo equipped! Specify a logo name: `/logo show <name>`."
+            return await interaction.followup.send(msg, ephemeral=True)
+
+        image_buffer = await asyncio.to_thread(generate_logo_image, lg)
+        file = discord.File(fp=image_buffer, filename=f"logo_{lg.id}.png")
+
+        ownership_badge = " ⭐ **Equipped Active Crest**" if is_equipped else (" ✅ **In Your Collection**" if is_owned else " 🔒 **Not In Your Collection**")
+
+        rarity_colors = {
+            "Regular": discord.Color.light_grey(),
+            "Rare": discord.Color.blue(),
+            "Legends": discord.Color.gold(),
+            "GOAT": discord.Color.red(),
+        }
+        logo_color = rarity_colors.get(lg.rarity, discord.Color.gold())
+
+        prem_desc = " • ⭐ **PREMIUM**" if getattr(lg, "category", "DEFAULT") == "PREMIUM" else ""
+        embed = discord.Embed(
+            title=f"🛡️ Club Crest: {lg.name}",
+            description=f"**Club:** {lg.club or 'Custom'} | **Rarity:** {lg.rarity}{prem_desc}\n**Status:**{ownership_badge}",
+            color=logo_color
+        )
+        embed.set_image(url=f"attachment://logo_{lg.id}.png")
+
+        boost_desc = f"+{lg.boost_val} {lg.boost_type}"
+        tactic_pref = lg.preferred_tactic if lg.preferred_tactic != "ALL" else "Any Tactic"
+        embed.add_field(
+            name="⚡ Crest Boost",
+            value=f"**Boost:** {boost_desc}\n**Preferred Tactic:** `{tactic_pref}`",
+            inline=True
+        )
+        embed.set_footer(text="Club Crests grant stat bonuses in Quick Sim matches!")
+        await interaction.followup.send(file=file, embed=embed)
+
+    @logo_group.command(name="unequip", description="Unequip your currently equipped club logo")
+    async def logo_unequip(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def do_unequip():
+            ul = UserLogo.objects.select_related("logo").filter(owner=user).first()
+            if not ul:
+                return None
+            name = ul.logo.name
+            ul.delete()
+            return name
+
+        removed_name = await do_unequip()
+        if not removed_name:
+            return await interaction.followup.send(
+                "❌ You don't have a logo equipped!", ephemeral=True
+            )
+
+        await interaction.followup.send(
+            f"✅ **{removed_name}** has been unequipped. Your team no longer has a club crest boost.",
+            ephemeral=True
+        )
+
+    @logo_group.command(name="remove", description="Remove/drop your active club logo (alias for /logo unequip)")
+    async def logo_remove(self, interaction: discord.Interaction):
+        await self.logo_unequip(interaction)
+
+    @logo_group.command(name="change", description="Change your active club logo (select from dropdown or type name)")
+    @app_commands.describe(logo_name="Optional logo name to change to directly")
+    @app_commands.autocomplete(logo_name=owned_logo_autocomplete)
+    async def logo_change(self, interaction: discord.Interaction, logo_name: str | None = None):
+        await interaction.response.defer(ephemeral=True)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        if logo_name:
+            @sync_to_async
+            def do_direct_equip():
+                item = UserOwnedLogo.objects.filter(user=user, logo__name__iexact=logo_name).select_related("logo").first()
+                if not item:
+                    item = UserOwnedLogo.objects.filter(user=user, logo__name__icontains=logo_name).select_related("logo").first()
+                if not item:
+                    return None
+                UserLogo.objects.update_or_create(owner=user, defaults={"logo": item.logo})
+                return item.logo
+
+            logo = await do_direct_equip()
+            if not logo:
+                return await interaction.followup.send(
+                    f"❌ You don't own a logo named **{logo_name}**! Check `/logo list`.",
+                    ephemeral=True
+                )
+            return await interaction.followup.send(
+                f"✅ Changed active club crest to **{logo.name}** (+{logo.boost_val} stat bonus)!",
+                ephemeral=True
+            )
+
+        @sync_to_async
+        def get_owned_logos():
+            ul = UserLogo.objects.filter(owner=user).first()
+            eq_id = ul.logo_id if ul else None
+            owned = list(UserOwnedLogo.objects.filter(user=user).select_related("logo").order_by("logo__name"))
+            return owned, eq_id
+
+        owned, eq_id = await get_owned_logos()
+        if not owned:
+            return await interaction.followup.send(
+                "🛡️ You don't own any logos yet! Catch them in wild spawns or with `/drop`.",
+                ephemeral=True
+            )
+
+        view = discord.ui.View(timeout=120)
+        view.add_item(LogoChangeSelect(user, owned, eq_id))
+        await interaction.followup.send("🛡️ **Select a club crest to equip:**", view=view, ephemeral=True)
+
+    @logo_group.command(name="drop", description="Drop an owned club logo into the channel for someone else to catch")
+    @app_commands.describe(logo_name="Name of the logo from your collection to drop")
+    @app_commands.autocomplete(logo_name=owned_logo_autocomplete)
+    async def logo_drop(self, interaction: discord.Interaction, logo_name: str):
+        if not interaction.channel or not isinstance(interaction.channel, discord.abc.Messageable):
+            return await interaction.response.send_message("This command can only be used in a text channel.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=False)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def process_drop():
+            item = UserOwnedLogo.objects.filter(user=user, logo__name__iexact=logo_name).select_related("logo").first()
+            if not item:
+                item = UserOwnedLogo.objects.filter(user=user, logo__name__icontains=logo_name).select_related("logo").first()
+            if not item:
+                return None, "NOT_OWNED"
+            # Check if currently equipped
+            ul = UserLogo.objects.filter(owner=user, logo=item.logo).first()
+            if ul:
+                return None, "IS_EQUIPPED"
+            target_logo = item.logo
+            item.delete()
+            return target_logo, "OK"
+
+        logo, status = await process_drop()
+        if status == "NOT_OWNED":
+            return await interaction.followup.send(f"❌ You do not own the logo **{logo_name}** in your collection!", ephemeral=True)
+        if status == "IS_EQUIPPED":
+            return await interaction.followup.send(
+                f"❌ **{logo_name}** is currently equipped as your active club crest! Use `/logo unequip` first before dropping.",
+                ephemeral=True
+            )
+
+        spawning_cog = interaction.client.get_cog("Spawning")
+        if not spawning_cog:
+            await UserOwnedLogo.objects.acreate(user=user, logo=logo)
+            return await interaction.followup.send("❌ Spawning system unavailable.", ephemeral=True)
+
+        spawned = await spawning_cog._spawn_logo(interaction.channel, logo=logo)
+        if spawned:
+            await interaction.followup.send(
+                f"📦 {interaction.user.mention} dropped their **{logo.name}** ({logo.rarity}) club crest into the channel! Solve and claim it below!"
+            )
+        else:
+            await UserOwnedLogo.objects.acreate(user=user, logo=logo)
+            await interaction.followup.send("❌ Failed to spawn logo in this channel.", ephemeral=True)
+
+    @manager_group.command(name="unequip", description="Unequip your currently equipped manager")
+    async def manager_unequip(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        @sync_to_async
+        def do_unequip():
+            um = UserManager.objects.select_related("manager").filter(owner=user).first()
+            if not um:
+                return None
+            name = um.manager.name
+            um.delete()
+            return name
+
+        removed_name = await do_unequip()
+        if not removed_name:
+            return await interaction.followup.send(
+                "❌ You don't have a manager equipped!", ephemeral=True
+            )
+
+        await interaction.followup.send(
+            f"✅ **{removed_name}** has been unequipped. Your team no longer has a manager boost.",
+            ephemeral=True
+        )
+
+    @manager_group.command(name="remove", description="Remove/unequip your active manager (alias for /manager unequip)")
+    async def manager_remove(self, interaction: discord.Interaction):
+        await self.manager_unequip(interaction)
+
+    @manager_group.command(name="change", description="Change your active manager (select from dropdown or type name)")
+    @app_commands.describe(manager_name="Optional manager name to change to directly")
+    @app_commands.autocomplete(manager_name=owned_manager_autocomplete)
+    async def manager_change(self, interaction: discord.Interaction, manager_name: str | None = None):
+        await interaction.response.defer(ephemeral=True)
+        user, _ = await DiscordUser.objects.aget_or_create(
+            discord_id=interaction.user.id, defaults={"username": interaction.user.name}
+        )
+
+        if manager_name:
+            @sync_to_async
+            def do_direct_equip():
+                item = UserOwnedManager.objects.filter(user=user, manager__name__iexact=manager_name).select_related("manager").first()
+                if not item:
+                    item = UserOwnedManager.objects.filter(user=user, manager__name__icontains=manager_name).select_related("manager").first()
+                if not item:
+                    return None
+                UserManager.objects.update_or_create(owner=user, defaults={"manager": item.manager})
+                return item.manager
+
+            mgr = await do_direct_equip()
+            if not mgr:
+                return await interaction.followup.send(
+                    f"❌ You don't own a manager named **{manager_name}**! Check `/manager list`.",
+                    ephemeral=True
+                )
+            return await interaction.followup.send(
+                f"✅ Changed active manager to **{mgr.name}** ({mgr.rarity})!",
+                ephemeral=True
+            )
+
+        @sync_to_async
+        def get_owned_mgrs():
+            um = UserManager.objects.filter(owner=user).first()
+            eq_id = um.manager_id if um else None
+            owned = list(UserOwnedManager.objects.filter(user=user).select_related("manager").order_by("manager__name"))
+            return owned, eq_id
+
+        owned, eq_id = await get_owned_mgrs()
+        if not owned:
+            return await interaction.followup.send(
+                "👔 You don't own any managers yet! Catch them in wild spawns or with `/drop`.",
+                ephemeral=True
+            )
+
+        view = discord.ui.View(timeout=120)
+        view.add_item(ManagerChangeSelect(user, owned, eq_id))
+        await interaction.followup.send("👔 **Select a manager to equip:**", view=view, ephemeral=True)
 
     # ── /dupes Command ──────────────────────────────────────────
     @app_commands.command(name="dupes", description="Show your amount of duplicate copies for a card")

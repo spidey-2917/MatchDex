@@ -855,10 +855,13 @@ class CardListView(discord.ui.View):
         # Row 2+: Selection
         self.add_selection_menu(self.current_cards)
 
+        has_dropdown = any(isinstance(child, discord.ui.Select) for child in self.children)
+
         username_str = getattr(self.user_db, "username", None) or f"User #{getattr(self.user_db, 'discord_id', 'Unknown')}"
+        hint = "\n*Select any card from the dropdown menu below to view details.*" if has_dropdown else ""
         embed = discord.Embed(
             title=f"🃏 {username_str}'s Card Inventory",
-            description=f"**Page {self.page + 1} of {max(1, total_pages)}** • Total Cards: **{self.total_cards}**\n*Select a card from the dropdown below to view full details.*",
+            description=f"**Page {self.page + 1} of {max(1, total_pages)}** • Total Cards: **{self.total_cards}**{hint}",
             color=discord.Color.blue()
         )
 
@@ -870,7 +873,8 @@ class CardListView(discord.ui.View):
             ovr = getattr(c.template, "ovr", 0)
             lines.append(f"`#{c.card_id}` **{c.template.display_name}** ({ovr} {pos}) • {c.template.rarity}{tier_badge}{ref_badge}")
 
-        if lines:
+        # When a dropdown menu is present, only show the dropdown menu — omit raw text name fields
+        if not has_dropdown and lines:
             chunks = []
             curr_chunk = []
             curr_len = 0
